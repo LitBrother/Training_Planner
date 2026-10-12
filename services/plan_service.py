@@ -1,0 +1,400 @@
+from datetime import date, timedelta
+
+import pandas as pd
+from sqlalchemy import select
+
+from models.orm import (AIAdjustment, Event, Note, RunningSession, Setting, StrengthSession, TrainingWeek, User)
+from models.schemas import PlanSettings
+from services.adjustments import adjust_km, apply_event_week, completion_pct, rank, reduction_factor
+from services.plan_generator import generate_plan
+from utils.dates import monday_of
+
+GOAL_NAME = "Goal Marathon"
+EVENT_TYPES = {"5km": 5.0, "10km": 10.0, "Half marathon": 21.1, "Marathon": 42.2, "Trail race": 0.0, "Custom": 0.0}
+
+
+# ---------------------------------------------------------------- users / settings
+def ensure_user(s, name: str = "Adam Williams") -> User:
+    u = s.scalars(select(User)).first()
+    if u is None:
+        u = User(name=name)
+        s.add(u)
+        s.flush()
+    return u
+
+
+def _setting_rows(s, user) -> dict:
+    return {r.key: r.value for r in s.scalars(select(Setting).where(Setting.user_id == user.id))}
+
+
+def get_settings(s, user) -> PlanSettings:
+    rows = _setting_rows(s, user)
+    rows.setdefault("plan_start", monday_of(date.today()).isoformat())
+    if not str(rows.get("openai_model", "")).startswith("gemini"):
+        rows["openai_model"] = "gemini-3.5-flash-lite"
+    return PlanSettings.model_validate(rows)
+
+
+def save_settings(s, user, cfg: PlanSettings) -> None:
+    existing = {r.key: r for r in s.scalars(select(Setting).where(Setting.user_id == user.id))}
+    for k, v in cfg.model_dump().items():
+        if v is None:
+            if k in existing:
+                s.delete(existing[k])
+            continue
+        if k in existing:
+            existing[k].value = str(v)
+        else:
+            s.add(Setting(user_id=user.id, key=k, value=str(v)))
+    user.name = cfg.user_name
+    s.flush()
+
+
+def ensure_defaults(s, user) -> None:
+    if "plan_start" not in _setting_rows(s, user):
+        save_settings(s, user, get_settings(s, user))
+
+
+# ---------------------------------------------------------------- plan sync
+def sync_plan(s, user, cfg: PlanSettings, today: date | None = None) -> None:
+    """Regenerate plan from settings, preserving logged sessions."""
+    plan = generate_plan(cfg.plan_start, cfg.end_date, cfg.peak_long_km, cfg.start_long_km,
+                         cfg.effective_taper, cfg.weekend_day)
+    ew = {w.week_start: w for w in s.scalars(select(TrainingWeek).where(TrainingWeek.user_id == user.id))}
+    er = {r.date: r for r in s.scalars(select(RunningSession).where(RunningSession.user_id == user.id))}
+    es = {x.date: x for x in s.scalars(select(StrengthSession).where(StrengthSession.user_id == user.id))}
+    keep_w, keep_r, keep_s = set(), set(), set()
+    for wk in plan:
+        tw = ew.get(wk["week_start"])
+        if tw is None:
+            tw = TrainingWeek(user_id=user.id, week_start=wk["week_start"])
+            s.add(tw)
+        tw.week_no, tw.phase, tw.is_recovery = wk["week_no"], wk["phase"], wk["is_recovery"]
+        tw.planned_km = round(sum(r["km"] for r in wk["runs"]), 1)
+        s.flush()
+        keep_w.add(tw.week_start)
+        for r in wk["runs"]:
+            row = er.get(r["date"])
+            if row is None:
+                row = RunningSession(user_id=user.id, date=r["date"], status="planned")
+                s.add(row)
+            row.week_id, row.weekday, row.slot = tw.id, r["weekday"], r["slot"]
+            row.name, row.run_type, row.variant, row.planned_km = r["name"], r["run_type"], r["variant"], r["km"]
+            if row.status == "planned" and row.actual_km is None:
+                row.adjusted_km, row.adjusted_type = r["km"], r["run_type"]
+            keep_r.add(r["date"])
+        for x in wk["strength"]:
+            row = es.get(x["date"])
+            if row is None:
+                row = StrengthSession(user_id=user.id, date=x["date"], completed=False)
+                s.add(row)
+            row.week_id, row.weekday, row.kind = tw.id, x["weekday"], x["kind"]
+            row.core_minutes, row.volume_level = x["core_minutes"], x["volume_level"]
+            keep_s.add(x["date"])
+    s.flush()
+    for d, row in er.items():
+        if d not in keep_r and row.status == "planned" and row.actual_km is None:
+            s.delete(row)
+    for d, row in es.items():
+        if d not in keep_s and not row.completed:
+            s.delete(row)
+    s.flush()
+    for ws, tw in ew.items():
+        if ws in keep_w:
+            continue
+        has_run = s.scalars(select(RunningSession.id).where(RunningSession.week_id == tw.id)).first()
+        has_str = s.scalars(select(StrengthSession.id).where(StrengthSession.week_id == tw.id)).first()
+        if not has_run and not has_str:
+            s.delete(tw)
+    goal = s.scalars(select(Event).where(Event.user_id == user.id, Event.name == GOAL_NAME)).first()
+    if cfg.race_date is None:
+        if goal is not None:
+            s.delete(goal)
+    elif goal is None:
+        s.add(Event(user_id=user.id, name=GOAL_NAME, event_type="Marathon", date=cfg.race_date,
+                    distance_km=42.2, priority="A", notes="Goal race"))
+    else:
+        goal.date = cfg.race_date
+    s.flush()
+    recalc(s, user, today)
+
+
+# ---------------------------------------------------------------- recalculation
+def _week_runs(s, user):
+    start = monday_of(get_settings(s, user).plan_start)
+    weeks = list(s.scalars(select(TrainingWeek).where(TrainingWeek.user_id == user.id,
+                                                      TrainingWeek.week_start >= start)
+                           .order_by(TrainingWeek.week_start)))
+    runs = list(s.scalars(select(RunningSession).where(RunningSession.user_id == user.id)
+                          .order_by(RunningSession.date)))
+    by: dict[int, list] = {}
+    for r in runs:
+        by.setdefault(r.week_id, []).append(r)
+    return weeks, by
+
+
+def week_completion(runs) -> float:
+    return completion_pct(sum(r.adjusted_km for r in runs), sum(r.actual_km or 0 for r in runs))
+
+
+def _current_factor(weeks, by, cur: date) -> float:
+    for w in reversed(weeks):
+        if w.week_start >= cur:
+            continue
+        rs = by.get(w.id, [])
+        if any(r.status != "planned" for r in rs):
+            return reduction_factor(week_completion(rs))
+    return 1.0
+
+
+def _week_event(events, ws: date):
+    cands = [e for e in events if e.name != GOAL_NAME and ws <= e.date <= ws + timedelta(days=6) and e.distance_km]
+    return max(cands, key=lambda e: e.distance_km, default=None)
+
+
+def recalc(s, user, today: date | None = None) -> None:
+    """Recompute adjusted km for current/future unlogged sessions. Only ever reduces vs plan (except event distance)."""
+    today = today or date.today()
+    cur = monday_of(today)
+    weeks, by = _week_runs(s, user)
+    events = list(s.scalars(select(Event).where(Event.user_id == user.id)))
+    ai: dict[date, list] = {}
+    for a in s.scalars(select(AIAdjustment).where(AIAdjustment.user_id == user.id, AIAdjustment.status == "approved")):
+        ai.setdefault(a.session_date, []).append(a)
+    factor = _current_factor(weeks, by, cur)
+    prev_long_missed = None
+    for w in weeks:
+        rs = by.get(w.id, [])
+        if w.week_start >= cur:
+            rows = [{"slot": r.slot, "run_type": r.run_type, "km": r.planned_km} for r in rs]
+            ev = _week_event(events, w.week_start)
+            if ev and not any(r.slot == "race" for r in rs):
+                rows = apply_event_week(rows, ev.distance_km)
+            for r, row in zip(rs, rows):
+                if r.status != "planned" or r.actual_km is not None:
+                    continue
+                if r.slot == "race":
+                    r.adjusted_km, r.adjusted_type = r.planned_km, r.run_type
+                    continue
+                km, typ = row["km"], row["run_type"]
+                is_event = row["slot"] == "weekend" and typ == "Event"
+                if not is_event:
+                    km = adjust_km(km, factor)
+                    if r.slot == "long" and prev_long_missed is not None:
+                        km = min(km, prev_long_missed)
+                for a in ai.get(r.date, []):
+                    km = min(km, a.new_km)
+                    if a.new_type and rank(a.new_type) <= rank(typ):
+                        typ = a.new_type
+                if not is_event:
+                    km = min(km, r.planned_km)
+                r.adjusted_km, r.adjusted_type = round(km, 1), typ
+        longs = [r for r in rs if r.slot == "long"]
+        prev_long_missed = longs[0].planned_km if longs and longs[0].status == "missed" else None
+        w.planned_km = round(sum(r.planned_km for r in rs), 1)
+        w.adjusted_km = round(sum(r.adjusted_km for r in rs), 1)
+        w.actual_km = round(sum(r.actual_km or 0 for r in rs), 1)
+        w.completion_pct = week_completion(rs)
+    s.flush()
+
+
+# ---------------------------------------------------------------- queries
+def list_weeks(s, user):
+    start = monday_of(get_settings(s, user).plan_start)
+    return list(s.scalars(select(TrainingWeek).where(
+        TrainingWeek.user_id == user.id, TrainingWeek.week_start >= start).order_by(TrainingWeek.week_start)))
+
+
+def week_runs(s, week_id):
+    return list(s.scalars(select(RunningSession).where(RunningSession.week_id == week_id).order_by(RunningSession.date)))
+
+
+def week_strength(s, week_id):
+    return list(s.scalars(select(StrengthSession).where(StrengthSession.week_id == week_id)
+                          .order_by(StrengthSession.date)))
+
+
+def all_runs(s, user):
+    return list(s.scalars(select(RunningSession).where(RunningSession.user_id == user.id).order_by(RunningSession.date)))
+
+
+def list_events(s, user):
+    return list(s.scalars(select(Event).where(Event.user_id == user.id).order_by(Event.date)))
+
+
+def list_notes(s, user):
+    return list(s.scalars(select(Note).where(Note.user_id == user.id).order_by(Note.date.desc(), Note.id.desc())))
+
+
+def list_adjustments(s, user, status: str | None = None):
+    q = select(AIAdjustment).where(AIAdjustment.user_id == user.id)
+    if status:
+        q = q.where(AIAdjustment.status == status)
+    return list(s.scalars(q.order_by(AIAdjustment.created_at.desc())))
+
+
+def current_week_index(weeks, today: date) -> int:
+    for i, w in enumerate(weeks):
+        if w.week_start <= today < w.week_start + timedelta(days=7):
+            return i
+    return 0 if not weeks or today < weeks[0].week_start else len(weeks) - 1
+
+
+def dashboard_summary(s, user, today: date | None = None) -> dict | None:
+    today = today or date.today()
+    cfg = get_settings(s, user)
+    weeks, by = _week_runs(s, user)
+    if not weeks:
+        return None
+    cur = weeks[current_week_index(weeks, today)]
+    runs = [r for rs in by.values() for r in rs]
+    nxt_long = min((r for r in runs if r.slot == "long" and r.date >= today and r.status == "planned"),
+                   key=lambda r: r.date, default=None)
+    nxt_event = s.scalars(select(Event).where(Event.user_id == user.id, Event.date >= today)
+                          .order_by(Event.date)).first()
+    factor = _current_factor(weeks, by, monday_of(today))
+    if today < weeks[0].week_start:
+        status = f"Not started: plan begins {weeks[0].week_start:%d %b %Y}"
+    elif cur.phase in ("Taper", "Race Week"):
+        status = "Taper: protect freshness"
+    elif factor < 1:
+        status = f"Adjusted: upcoming runs reduced {round((1 - factor) * 100)}%"
+    else:
+        status = "On track"
+    return {"days_to_race": (cfg.race_date - today).days if cfg.race_date else None,
+            "race_date": cfg.race_date, "week_no": cur.week_no,
+            "total_weeks": len(weeks), "phase": cur.phase, "planned": cur.planned_km, "adjusted": cur.adjusted_km,
+            "actual": cur.actual_km, "completion": cur.completion_pct, "next_long": nxt_long,
+            "next_event": nxt_event, "status": status, "factor": factor}
+
+
+def weekly_dataframe(s, user) -> pd.DataFrame:
+    weeks, by = _week_runs(s, user)
+    rows = []
+    for w in weeks:
+        rs = by.get(w.id, [])
+        lg = next((r for r in rs if r.slot == "long"), None)
+        rows.append({"week_no": w.week_no, "week_start": pd.Timestamp(w.week_start), "phase": w.phase,
+                     "planned": w.planned_km, "adjusted": w.adjusted_km, "actual": w.actual_km,
+                     "completion": w.completion_pct, "logged": any(r.status != "planned" for r in rs),
+                     "long_planned": lg.planned_km if lg else None,
+                     "long_actual": lg.actual_km if lg and lg.status == "completed" else None})
+    return pd.DataFrame(rows, columns=["week_no", "week_start", "phase", "planned", "adjusted", "actual",
+                                       "completion", "logged", "long_planned", "long_actual"])
+
+
+def monthly_dataframe(s, user) -> pd.DataFrame:
+    rows = [{"month": r.date.strftime("%Y-%m"), "planned": r.planned_km, "adjusted": r.adjusted_km,
+             "actual": r.actual_km or 0} for r in all_runs(s, user)]
+    if not rows:
+        return pd.DataFrame(columns=["month", "planned", "adjusted", "actual"])
+    return pd.DataFrame(rows).groupby("month", as_index=False).sum()
+
+
+# ---------------------------------------------------------------- mutations
+def log_run(s, user, run_id: int, status: str, actual_km: float | None, notes: str = "",
+            today: date | None = None, overwrite: bool = False) -> None:
+    r = s.get(RunningSession, run_id)
+    if r.garmin_id and r.source == "garmin" and not overwrite:
+        raise ValueError("This run is linked to Garmin. Tick 'Overwrite manually' to change it.")
+    r.status = status
+    r.notes = notes
+    if status == "completed":
+        r.actual_km = actual_km if actual_km is not None else r.adjusted_km
+    elif status == "missed":
+        r.actual_km = 0.0
+    else:
+        r.actual_km = None
+    r.source = "manual"
+    if r.garmin_id and overwrite:
+        r.manual_lock = True
+    s.flush()
+    recalc(s, user, today)
+
+
+def unlock_run(s, user, run_id: int, today: date | None = None) -> None:
+    """Hand the session back to Garmin; the next sync refreshes it."""
+    s.get(RunningSession, run_id).manual_lock = False
+    s.flush()
+    recalc(s, user, today)
+
+
+def log_strength(s, sid: int, completed: bool, notes: str = "") -> None:
+    x = s.get(StrengthSession, sid)
+    x.completed, x.notes = completed, notes
+    s.flush()
+
+
+def add_event(s, user, name, event_type, d: date, distance_km: float, priority: str, notes: str = "",
+              today: date | None = None) -> Event:
+    e = Event(user_id=user.id, name=name, event_type=event_type, date=d, distance_km=distance_km,
+              priority=priority, notes=notes)
+    s.add(e)
+    s.flush()
+    recalc(s, user, today)
+    return e
+
+
+def delete_event(s, user, event_id: int, today: date | None = None) -> None:
+    ev = s.get(Event, event_id)
+    if not ev:
+        return
+    cfg = get_settings(s, user)
+    if cfg.race_date == ev.date:
+        save_settings(s, user, cfg.model_copy(update={"race_date": None}))
+    s.delete(ev)
+    s.flush()
+    sync_plan(s, user, get_settings(s, user), today)
+
+
+def reset_unlogged(s, user) -> None:
+    for r in all_runs(s, user):
+        if r.status == "planned" and r.actual_km is None:
+            r.adjusted_km, r.adjusted_type = r.planned_km, r.run_type
+    s.flush()
+
+
+def add_note(s, user, d: date, category: str, text: str) -> None:
+    s.add(Note(user_id=user.id, date=d, category=category, text=text))
+    s.flush()
+
+
+def delete_note(s, note_id: int) -> None:
+    n = s.get(Note, note_id)
+    if n:
+        s.delete(n)
+
+
+def _week_days(d: date) -> list[date]:
+    m = monday_of(d)
+    return [m + timedelta(days=i) for i in range(7)]
+
+
+def set_strength_status(s, sid: int, status: str) -> None:
+    if status not in ("planned", "completed", "missed"):
+        raise ValueError("Invalid status")
+    s.get(StrengthSession, sid).status = status
+    s.flush()
+
+
+def free_days(s, kind: str, current: date) -> list[date]:
+    """Days in the same week this session may move to."""
+    model = StrengthSession if kind == "strength" else RunningSession
+    taken = {x.date for x in s.scalars(select(model))}
+    return [d for d in _week_days(current) if d != current and d not in taken]
+
+
+def move_session(s, user, kind: str, sid: int, new_date: date) -> None:
+    model = StrengthSession if kind == "strength" else RunningSession
+    obj = s.get(model, sid)
+    if monday_of(new_date) != monday_of(obj.date):
+        raise ValueError("Sessions can only move within the same week.")
+    if new_date not in free_days(s, kind, obj.date):
+        raise ValueError("That day already has a " + ("strength session." if kind == "strength"
+                                                      else "run. Two runs in one day aren't allowed."))
+    obj.date = new_date
+    if kind == "strength" and obj.status == "missed":
+        obj.status = "planned"
+    s.flush()
+    if kind == "run":
+        recalc(s, user)

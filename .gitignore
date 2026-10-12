@@ -1,0 +1,5 @@
+.streamlit/secrets.toml
+.garmin_tokens/
+*.db
+__pycache__/
+.venv/

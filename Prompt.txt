@@ -1,0 +1,809 @@
+You are a senior Python engineer, Streamlit developer, endurance coach, sports scientist, UX designer and data architect.
+
+Build a complete production-ready Streamlit application called:
+
+Adam's Marathon Planner
+
+The application will be deployed using Streamlit Community Cloud or a private Streamlit deployment.
+
+The application must be designed as a personal marathon training platform.
+
+This is NOT a generic fitness app.
+
+The primary goal is:
+
+Prepare safely and effectively for a marathon in September 2027.
+
+The system must use evidence-informed endurance-training principles.
+
+Scientific guidance should prioritise:
+
+- consistency
+- progressive overload
+- aerobic development
+- recovery
+- marathon-specific preparation
+- tapering
+
+The application must not:
+
+- provide medical advice
+- diagnose injuries
+- prescribe rehabilitation
+- prescribe medication
+
+Always recommend professional medical advice where appropriate.
+
+--------------------------------------------------
+PRIMARY USER
+--------------------------------------------------
+
+Name:
+Adam Williams
+
+Goal Race:
+Marathon
+
+Default Race Date:
+26 September 2027
+
+Current Weekly Structure:
+
+Monday:
+Push + Core
+
+Tuesday:
+Quality Run
+
+Wednesday:
+Pull + Optional Core
+
+Thursday:
+Legs
+
+Friday:
+Long Run
+
+Saturday or Sunday:
+Easy Run / Recovery Run / Hike / Event
+
+Workout order must NEVER change automatically.
+
+Only session volume and intensity may change.
+
+--------------------------------------------------
+SCIENTIFIC TRAINING PRINCIPLES
+--------------------------------------------------
+
+Use the following principles:
+
+1. Most running volume should be easy.
+
+2. Long runs should usually be conversational.
+
+3. One quality session per week.
+
+4. Long-term consistency is more important than perfect weekly completion.
+
+5. Never compensate for missed mileage.
+
+6. Do not move sessions.
+
+7. Do not double long runs.
+
+8. Maintain taper.
+
+9. Introduce marathon pace work gradually.
+
+10. Include recovery weeks.
+
+11. Strength training supports running performance.
+
+12. Strength work should not compromise key run sessions.
+
+13. Never rapidly increase weekly mileage.
+
+14. Protect returning runners after missed training.
+
+--------------------------------------------------
+TRAINING PHASES
+--------------------------------------------------
+
+Generate phases automatically based on marathon date.
+
+PHASE 1
+Base Development
+
+Goals:
+
+- consistency
+- durability
+- aerobic foundation
+- easy running habit
+
+Tuesday sessions:
+
+- easy runs
+- strides
+- short fartlek sessions
+
+Long runs:
+
+- easy effort
+
+--------------------------------------------------
+
+PHASE 2
+Aerobic Build
+
+Goals:
+
+- threshold development
+- aerobic capacity
+- longer long runs
+
+Tuesday sessions:
+
+- threshold intervals
+- tempo running
+- aerobic intervals
+
+--------------------------------------------------
+
+PHASE 3
+Marathon Build
+
+Goals:
+
+- marathon-specific preparation
+- fueling practice
+- long-run development
+
+Tuesday sessions:
+
+- threshold
+- marathon pace intervals
+
+Long runs:
+
+- marathon pace finishing blocks
+- fueling practice
+
+--------------------------------------------------
+
+PHASE 4
+Peak
+
+Goals:
+
+- race-specific fitness
+- pacing practice
+- final endurance development
+
+Peak long run:
+
+32km
+
+Configurable in settings.
+
+--------------------------------------------------
+
+PHASE 5
+Taper
+
+Default taper length:
+
+3 weeks
+
+Taper design:
+
+- maintain intensity
+- reduce volume
+- reduce fatigue
+
+Volume reduction should generally align with evidence-supported tapering approaches.
+
+Long runs progressively reduced.
+
+Leg strength volume heavily reduced.
+
+--------------------------------------------------
+
+PHASE 6
+Race Week
+
+Minimal fatigue.
+
+Short easy runs.
+
+No heavy leg training.
+
+Marathon Sunday.
+
+--------------------------------------------------
+RUNNING GUIDANCE
+--------------------------------------------------
+
+Every running workout must include:
+
+Workout Name
+
+Workout Purpose
+
+Warm Up
+
+Main Set
+
+Recovery
+
+Cool Down
+
+Target RPE
+
+Talk Test Guidance
+
+Common Errors
+
+When To Reduce Session
+
+When To Stop Session
+
+--------------------------------------------------
+RUN TYPES
+--------------------------------------------------
+
+Recovery
+
+RPE 2
+
+Conversation easy.
+
+Purpose:
+Recovery
+
+--------------------------------------------------
+
+Easy
+
+RPE 2-3
+
+Purpose:
+Aerobic development
+
+--------------------------------------------------
+
+Long Run
+
+RPE 3-4
+
+Purpose:
+Endurance
+Fueling
+Durability
+
+--------------------------------------------------
+
+Steady
+
+RPE 4-5
+
+Purpose:
+Aerobic strength
+
+--------------------------------------------------
+
+Marathon Pace
+
+RPE 5-6
+
+Purpose:
+Race specific preparation
+
+--------------------------------------------------
+
+Threshold
+
+RPE 7
+
+Purpose:
+Sustainable speed development
+
+--------------------------------------------------
+
+Intervals
+
+RPE 7-8
+
+Purpose:
+Running economy and aerobic power
+
+--------------------------------------------------
+
+Strides
+
+15-25 seconds
+
+Fast and relaxed
+
+Not sprinting
+
+--------------------------------------------------
+STRENGTH TRAINING
+--------------------------------------------------
+
+Push and Pull are self-programmed.
+
+The planner should NOT prescribe exercises.
+
+Instead provide guidance.
+
+--------------------------------------------------
+
+MONDAY PUSH
+
+Purpose:
+
+Upper body strength
+
+Posture
+
+General athleticism
+
+Guidance:
+
+- 3 to 5 exercises
+- 2 to 4 working sets
+- leave 1-3 reps in reserve
+- avoid failure
+- avoid soreness affecting Tuesday
+
+Core:
+
+10-15 minutes
+
+--------------------------------------------------
+
+WEDNESDAY PULL
+
+Purpose:
+
+Upper back
+
+Posture
+
+Shoulder health
+
+Guidance:
+
+- 3 to 5 exercises
+- 2 to 4 working sets
+- leave 1-3 reps in reserve
+
+Optional:
+
+10 minutes core
+
+--------------------------------------------------
+
+THURSDAY LEGS
+
+User chooses exercises.
+
+Application should guide volume.
+
+Purpose:
+
+Maintain running performance.
+
+Improve running economy.
+
+Support long-term durability.
+
+Guidance:
+
+2 to 4 movements
+
+2 to 3 working sets
+
+Leave 2-3 reps in reserve
+
+Not a bodybuilding workout.
+
+Not a maximal strength session.
+
+If Friday long run exceeds:
+
+28km
+
+Automatically recommend reduced leg volume.
+
+--------------------------------------------------
+CORE TRAINING
+--------------------------------------------------
+
+Core focus:
+
+Anti-extension
+
+Anti-rotation
+
+Anti-lateral flexion
+
+Examples:
+
+- Plank
+- Side plank
+- Dead bug
+- Pallof press
+- Farmer carry
+- Suitcase carry
+
+Target:
+
+2 sessions weekly
+
+10-20 minutes
+
+--------------------------------------------------
+MISSED TRAINING RULES
+--------------------------------------------------
+
+Missed Tuesday
+
+Do not move session.
+
+Do not add more intervals later.
+
+Continue plan.
+
+--------------------------------------------------
+
+Missed Friday Long Run
+
+Do not make it up.
+
+Do not increase next long run.
+
+Next week may be maintained or reduced.
+
+--------------------------------------------------
+
+Weekly Completion Rules
+
+Completion ≥ 90%
+
+No changes.
+
+--------------------------------------------------
+
+Completion 75-89%
+
+Reduce upcoming run distances 5%.
+
+--------------------------------------------------
+
+Completion <75%
+
+Reduce upcoming run distances 10%.
+
+--------------------------------------------------
+
+Never:
+
+- punish
+- compensate
+- add missed mileage
+
+--------------------------------------------------
+EVENT MANAGEMENT
+--------------------------------------------------
+
+Support events:
+
+5km
+
+10km
+
+Half marathon
+
+Marathon
+
+Trail race
+
+Custom
+
+Each event contains:
+
+Date
+
+Distance
+
+Priority
+
+Notes
+
+A event
+
+Goal race
+
+B event
+
+Important
+
+C event
+
+Training event
+
+--------------------------------------------------
+
+Event weeks keep same structure.
+
+Example:
+
+Normal week
+
+Tuesday 10km threshold
+
+Friday 26km long run
+
+Weekend 8km easy
+
+If half marathon added:
+
+Tuesday reduced
+
+Friday shakeout
+
+Weekend event
+
+Workout order remains unchanged.
+
+--------------------------------------------------
+AI TRAINING ASSISTANT
+--------------------------------------------------
+
+Integrate OpenAI API.
+
+AI optional.
+
+Application must still function without AI.
+
+AI must review:
+
+Training completion
+
+Events
+
+Training notes
+
+Injury notes
+
+Travel
+
+Fatigue
+
+Sleep
+
+AI may:
+
+- reduce volume
+- simplify quality sessions
+- increase recovery
+
+AI may NOT:
+
+- add mileage
+- remove taper
+- move workout days
+- increase workload above original plan
+
+Display all proposed changes.
+
+User must approve them.
+
+--------------------------------------------------
+STREAMLIT FEATURES
+--------------------------------------------------
+
+Dashboard
+
+Weekly planner
+
+Event management
+
+AI coach
+
+Progress tracking
+
+Notes
+
+Settings
+
+--------------------------------------------------
+DASHBOARD
+--------------------------------------------------
+
+Show:
+
+Race countdown
+
+Current week
+
+Current phase
+
+Planned km
+
+Adjusted km
+
+Actual km
+
+Completion %
+
+Next long run
+
+Next event
+
+Training status
+
+--------------------------------------------------
+CHARTS
+--------------------------------------------------
+
+Use Plotly.
+
+Charts:
+
+Planned weekly volume
+
+Adjusted volume
+
+Actual volume
+
+Long-run progression
+
+Monthly distance
+
+Training consistency
+
+--------------------------------------------------
+DATA STORAGE
+--------------------------------------------------
+
+Use SQLite database.
+
+Tables:
+
+users
+
+training_weeks
+
+running_sessions
+
+strength_sessions
+
+events
+
+notes
+
+settings
+
+ai_adjustments
+
+--------------------------------------------------
+EXPORTS
+--------------------------------------------------
+
+Allow:
+
+Excel export
+
+CSV export
+
+JSON backup
+
+JSON restore
+
+--------------------------------------------------
+TECH STACK
+--------------------------------------------------
+
+Python
+
+Streamlit
+
+Pandas
+
+Plotly
+
+SQLite
+
+SQLAlchemy
+
+Pydantic
+
+OpenAI
+
+--------------------------------------------------
+PROJECT STRUCTURE
+--------------------------------------------------
+
+/app.py
+
+/pages
+ dashboard.py
+ training_plan.py
+ events.py
+ progress.py
+ ai_coach.py
+ notes.py
+ settings.py
+
+/models
+
+/services
+
+/database
+
+/utils
+
+/data
+
+/tests
+
+requirements.txt
+
+README.md
+
+--------------------------------------------------
+TESTING
+--------------------------------------------------
+
+Create automated tests for:
+
+Missed long run
+
+Missed quality session
+
+Half marathon week
+
+Taper protection
+
+AI adjustment validation
+
+Backup restore
+
+Mileage adjustment calculations
+
+--------------------------------------------------
+DELIVERABLES
+--------------------------------------------------
+
+Generate:
+
+1. Full project architecture
+
+2. Database schema
+
+3. Streamlit pages
+
+4. Services layer
+
+5. AI integration
+
+6. Plotly charts
+
+7. Tests
+
+8. requirements.txt
+
+9. README
+
+10. Deployment guide
+
+Generate complete code.
+
+Do not generate pseudocode.
+
+Do not leave placeholders.
+
+All code must be runnable.
