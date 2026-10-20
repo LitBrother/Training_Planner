@@ -22,8 +22,12 @@ pytest
   and the next long run after a missed one is capped at the missed distance.
 - Event weeks: Tuesday reduced, Friday shakeout (or reduced), weekend = event.
 - Legs: reduced volume if long run > 28 km, minimal in taper, none in race week.
-- AI can only reduce volume, simplify quality, or add recovery. Proposals are validated and need your approval.
-- The requested automatic AI workflow that can increase or decrease training is not implemented yet.
+- Gemini can suggest safe increases or reductions. Changes apply automatically only after validation: no more than
+  110% of planned distance per run or week, no long run above the configured peak, no event-session edits, and no
+  increases during taper or race week. Each change is logged and can be reverted from the AI Coach page.
+- Accepted friends can view and directly edit each other's future training plan and goal race. Edits preserve the
+  fixed schedule and the same distance/intensity limits.
+- Strength logs are included in Gemini's recent-history context alongside notes, completed weeks, and Garmin runs.
 
 ## AI setup (optional)
 Set `GEMINI_API_KEY` as an environment variable or in Streamlit secrets, or paste it in Settings (session only).
@@ -40,12 +44,21 @@ Set `GEMINI_API_KEY` as an environment variable or in Streamlit secrets, or past
    SUPABASE_URL = "https://[project-ref].supabase.co"
    SUPABASE_ANON_KEY = "[publishable-or-anon-key]"
    GEMINI_API_KEY = "[optional-gemini-key]"
+   GARMIN_ENCRYPTION_KEY = "[optional-generated-fernet-key]"
    ```
+
+   Generate a Fernet key locally with:
+   ```powershell
+   python -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())"
+   ```
+   Add that output to Streamlit Secrets for per-account Garmin credential encryption. Keep a secure backup:
+   changing or losing the key makes saved Garmin credentials unreadable. Garmin credentials are excluded from
+   user backups and exports. Do not commit or share the encryption key.
 
 5. The app creates/updates its tables on startup. Sign up with your email, confirm it if Supabase requires confirmation, then sign in. Each account gets its own plan and data. The first account claims the legacy single-user profile if the existing database has one.
 6. To transfer local SQLite data, download a JSON backup from the local app's **Settings** page, sign in to the hosted app, and restore that backup there. Restore only replaces the signed-in account's data.
 
-The app enables PostgreSQL row-level security without public table policies; the private server-side database connection performs account-scoped access. The hosted database keeps progress across app restarts and redeploys. Free plans have limits and may pause or change over time, so check current provider terms and keep periodic JSON backups. Hosted Garmin sync is disabled until credentials can be stored separately and securely for each account. Friend invitations and shared training views are not implemented yet.
+The app enables PostgreSQL row-level security without public table policies; the private server-side database connection performs account-scoped access. The hosted database keeps progress across app restarts and redeploys. Free plans have limits and may pause or change over time, so check current provider terms and keep periodic JSON backups. Hosted Garmin credentials are encrypted per account at rest using the server-side Fernet key; each account's Garmin token files are stored in its own directory. Garmin may require additional account verification, and provider login behavior can change.
 
 **Private deployment** (VM or container)
 ```powershell

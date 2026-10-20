@@ -43,7 +43,8 @@ def configure(url: str | None = None) -> None:
     adds = [("users", "auth_uid", "VARCHAR"), ("users", "email", "VARCHAR"),
             ("running_sessions", "garmin_id", "VARCHAR"), ("running_sessions", "source", "VARCHAR"),
             ("running_sessions", "manual_lock", "BOOLEAN DEFAULT 0"),
-            ("strength_sessions", "status", "VARCHAR DEFAULT 'planned'")]
+            ("strength_sessions", "status", "VARCHAR DEFAULT 'planned'"),
+            ("ai_adjustments", "created_by_user_id", "INTEGER")]
     with engine.begin() as conn:
         for table, col, ddl in adds:
             if insp.has_table(table) and col not in {c["name"] for c in insp.get_columns(table)}:

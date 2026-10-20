@@ -15,10 +15,11 @@ multi-account deployments use PostgreSQL with Supabase authentication.
 
 ## Important behavior
 - The weekly training order is fixed; adjust volume and intensity, not the schedule.
-- AI schedule changes must be validated and must preserve the fixed weekly structure and taper. The requested automatic increase/decrease workflow is not implemented yet; do not claim otherwise.
+- AI schedule changes are automatically applied only after validation: max 110% of planned daily and weekly distance, never above peak long-run target, and no increases during taper/race week. Changes are logged and can be reverted.
+- Shared plan access and edits require an accepted friend relationship. Keep server-side authorization checks on every shared read/write path.
 - Hosted records must always be scoped to the authenticated account. Never use the local single-user fallback in hosted mode.
 - Never commit database URLs, Supabase keys, Gemini keys, or Garmin credentials.
-- Follow the training rules in `README.md`; don't change them unless asked.
+- Follow the training rules in `README.md`; do not relax safety bounds without explicit user approval.
 
 ## Commands
 - Run the app: `streamlit run app.py`

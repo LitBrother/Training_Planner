@@ -1,4 +1,4 @@
-"""Pure rules. Nothing here ever adds mileage or moves sessions."""
+"""Pure baseline plan rules; separately validated AI changes may adjust volume."""
 
 INTENSITY = {
     "Rest": 0, "Recovery": 1, "Shakeout": 1, "Easy": 2, "Easy + Strides": 2, "Long Run": 3,

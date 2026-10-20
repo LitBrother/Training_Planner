@@ -1,11 +1,13 @@
 from datetime import date, timedelta
 
 import pandas as pd
-from sqlalchemy import select
+from sqlalchemy import func, select
 
-from models.orm import (AIAdjustment, Event, Note, RunningSession, Setting, StrengthSession, TrainingWeek, User)
+from models.orm import (
+    AIAdjustment, Event, Friendship, Note, RunningSession, Setting, StrengthSession, TrainingWeek, User,
+)
 from models.schemas import PlanSettings
-from services.adjustments import adjust_km, apply_event_week, completion_pct, rank, reduction_factor
+from services.adjustments import INTENSITY, adjust_km, apply_event_week, completion_pct, rank, reduction_factor
 from services.plan_generator import generate_plan
 from utils.dates import monday_of
 
@@ -168,16 +170,19 @@ def _week_event(events, ws: date):
 
 
 def recalc(s, user, today: date | None = None) -> None:
-    """Recompute adjusted km for current/future unlogged sessions. Only ever reduces vs plan (except event distance)."""
+    """Recompute current/future volume while enforcing plan, AI, and event limits."""
     today = today or date.today()
     cur = monday_of(today)
     weeks, by = _week_runs(s, user)
     events = list(s.scalars(select(Event).where(Event.user_id == user.id)))
     ai: dict[date, list] = {}
-    for a in s.scalars(select(AIAdjustment).where(AIAdjustment.user_id == user.id, AIAdjustment.status == "approved")):
-        ai.setdefault(a.session_date, []).append(a)
+    for a in s.scalars(select(AIAdjustment).where(
+        AIAdjustment.user_id == user.id, AIAdjustment.status.in_(("approved", "applied"))
+    ).order_by(AIAdjustment.created_at, AIAdjustment.id)):
+        ai[a.session_date] = [a]
     factor = _current_factor(weeks, by, cur)
     prev_long_missed = None
+    cfg = get_settings(s, user)
     for w in weeks:
         rs = by.get(w.id, [])
         if w.week_start >= cur:
@@ -198,11 +203,13 @@ def recalc(s, user, today: date | None = None) -> None:
                     if r.slot == "long" and prev_long_missed is not None:
                         km = min(km, prev_long_missed)
                 for a in ai.get(r.date, []):
-                    km = min(km, a.new_km)
+                    max_km = min(r.planned_km * 1.1, cfg.peak_long_km) if r.slot == "long" else r.planned_km * 1.1
+                    km = min(max(a.new_km, 0), max_km)
                     if a.new_type and rank(a.new_type) <= rank(typ):
                         typ = a.new_type
                 if not is_event:
-                    km = min(km, r.planned_km)
+                    if not ai.get(r.date):
+                        km = min(km, r.planned_km)
                 r.adjusted_km, r.adjusted_type = round(km, 1), typ
         longs = [r for r in rs if r.slot == "long"]
         prev_long_missed = longs[0].planned_km if longs and longs[0].status == "missed" else None
@@ -246,6 +253,122 @@ def list_adjustments(s, user, status: str | None = None):
     if status:
         q = q.where(AIAdjustment.status == status)
     return list(s.scalars(q.order_by(AIAdjustment.created_at.desc())))
+
+
+def _friendship(s, user_id: int, friend_id: int):
+    return s.scalars(select(Friendship).where(
+        Friendship.user_id == min(user_id, friend_id),
+        Friendship.friend_id == max(user_id, friend_id),
+    )).first()
+
+
+def accepted_friends(s, user):
+    rows = s.scalars(select(Friendship).where(
+        Friendship.status == "accepted",
+        (Friendship.user_id == user.id) | (Friendship.friend_id == user.id),
+    )).all()
+    friend_ids = {row.friend_id if row.user_id == user.id else row.user_id for row in rows}
+    return list(s.scalars(select(User).where(User.id.in_(friend_ids)).order_by(User.name))) if friend_ids else []
+
+
+def friend_requests(s, user):
+    incoming = list(s.scalars(select(Friendship).where(
+        Friendship.status == "pending", Friendship.requested_by != user.id,
+        (Friendship.user_id == user.id) | (Friendship.friend_id == user.id),
+    )))
+    outgoing = list(s.scalars(select(Friendship).where(
+        Friendship.status == "pending", Friendship.requested_by == user.id
+    )))
+    return incoming, outgoing
+
+
+def send_friend_request(s, user, email: str) -> None:
+    target = s.scalars(select(User).where(func.lower(User.email) == email.strip().lower())).first()
+    if target is None:
+        raise ValueError("No account was found for that email address.")
+    if target.id == user.id:
+        raise ValueError("You cannot send a friend request to yourself.")
+    row = _friendship(s, user.id, target.id)
+    if row and row.status == "accepted":
+        raise ValueError("You are already connected.")
+    if row and row.status == "pending":
+        if row.requested_by != user.id:
+            raise ValueError("That person has already sent you a request; accept it below.")
+        raise ValueError("A friend request is already pending.")
+    if row:
+        row.requested_by, row.status = user.id, "pending"
+    else:
+        s.add(Friendship(user_id=min(user.id, target.id), friend_id=max(user.id, target.id),
+                         requested_by=user.id, status="pending"))
+    s.flush()
+
+
+def respond_friend_request(s, user, friendship_id: int, accept: bool) -> None:
+    row = s.get(Friendship, friendship_id)
+    if (row is None or user.id not in (row.user_id, row.friend_id) or row.requested_by == user.id
+            or row.status != "pending"):
+        raise ValueError("Incoming friend request not found.")
+    row.status = "accepted" if accept else "rejected"
+    s.flush()
+
+
+def remove_friend(s, user, friend_id: int) -> None:
+    row = _friendship(s, user.id, friend_id)
+    if row is None or row.status != "accepted":
+        raise ValueError("Accepted friend connection not found.")
+    s.delete(row)
+    s.flush()
+
+
+def assert_friend_access(s, actor, owner_id: int) -> None:
+    if actor.id == owner_id:
+        return
+    row = _friendship(s, actor.id, owner_id)
+    if row is None or row.status != "accepted":
+        raise ValueError("Only an accepted friend can view or edit this plan.")
+
+
+def edit_shared_run(s, actor, owner, run_id: int, new_km: float, new_type: str) -> None:
+    assert_friend_access(s, actor, owner.id)
+    run = s.get(RunningSession, run_id)
+    if run is None or run.user_id != owner.id:
+        raise ValueError("Running session not found for this plan.")
+    if run.status != "planned" or run.date < date.today() or run.slot == "race":
+        raise ValueError("Only future, unlogged, non-race sessions can be edited.")
+    if new_km < 0 or new_km > run.planned_km * 1.1 + 1e-9:
+        raise ValueError("Distance must be between 0 and 110% of the original planned distance.")
+    if run.slot == "long" and new_km > get_settings(s, owner).peak_long_km:
+        raise ValueError("Distance cannot exceed the plan's peak long-run target.")
+    week = s.get(TrainingWeek, run.week_id) if run.week_id else None
+    if week and week.phase in {"Taper", "Race Week"} and new_km > run.adjusted_km + 1e-9:
+        raise ValueError("Distance cannot be increased during taper or race week.")
+    if (run.adjusted_type or run.run_type) == "Event":
+        raise ValueError("Event sessions cannot be changed.")
+    week_runs = list(s.scalars(select(RunningSession).where(
+        RunningSession.user_id == owner.id, RunningSession.week_id == run.week_id
+    )))
+    planned_week = sum(item.planned_km for item in week_runs)
+    adjusted_week = sum(item.adjusted_km for item in week_runs)
+    if adjusted_week - run.adjusted_km + new_km > planned_week * 1.1 + 1e-9:
+        raise ValueError("The edit would exceed 110% of the planned weekly distance.")
+    current_type = run.adjusted_type or run.run_type
+    if new_type not in INTENSITY or rank(new_type) > rank(current_type):
+        raise ValueError("Workout intensity cannot be increased.")
+    s.add(AIAdjustment(
+        user_id=owner.id, created_by_user_id=actor.id, session_date=run.date, kind="friend_edit",
+        old_km=run.adjusted_km, new_km=new_km, old_type=current_type, new_type=new_type,
+        reason=f"Edited by accepted friend {actor.name}", status="applied",
+    ))
+    s.flush()
+    recalc(s, owner)
+
+
+def update_shared_goal(s, actor, owner, race_date: date | None) -> None:
+    assert_friend_access(s, actor, owner.id)
+    cfg = get_settings(s, owner)
+    updated = PlanSettings.model_validate({**cfg.model_dump(), "race_date": race_date})
+    save_settings(s, owner, updated)
+    sync_plan(s, owner, updated)
 
 
 def current_week_index(weeks, today: date) -> int:

@@ -24,11 +24,15 @@ def dump_all(s, user=None) -> dict:
         query = select(model)
         if user is not None:
             query = query.where(model.id == user.id) if model is User else query.where(model.user_id == user.id)
+        if model is Setting:
+            query = query.where(Setting.key.notin_(("garmin_email_enc", "garmin_password_enc")))
         rows = []
         for obj in s.scalars(query):
             values = {}
             for column in inspect(model).column_attrs:
                 if user is not None and model is User and column.key in {"auth_uid", "email"}:
+                    continue
+                if user is not None and model is AIAdjustment and column.key == "created_by_user_id":
                     continue
                 values[column.key] = _ser(getattr(obj, column.key))
             rows.append(values)
@@ -63,7 +67,10 @@ def restore_json(s, text: str, user=None) -> dict[str, int]:
         counts = {"users": 1}
         models = [model for name, model in TABLES.items() if name != "users"]
         for model in reversed(models):
-            rows = s.scalars(select(model).where(model.user_id == user.id)).all()
+            query = select(model).where(model.user_id == user.id)
+            if model is Setting:
+                query = query.where(Setting.key.notin_(("garmin_email_enc", "garmin_password_enc")))
+            rows = s.scalars(query).all()
             for obj in rows:
                 s.delete(obj)
         s.flush()
@@ -71,9 +78,16 @@ def restore_json(s, text: str, user=None) -> dict[str, int]:
         for name, model in TABLES.items():
             if model is User:
                 continue
+            restored_count = 0
             for row in tables[name]:
-                values = {k: _parse(model.__table__.columns[k], v) for k, v in row.items()
-                          if k in model.__table__.columns and k not in {"id", "user_id"}}
+                if model is Setting and row.get("key") in {"garmin_email_enc", "garmin_password_enc"}:
+                    continue
+                values = {
+                    k: _parse(model.__table__.columns[k], v) for k, v in row.items()
+                    if k in model.__table__.columns
+                    and k not in {"id", "user_id"}
+                    and not (user is not None and model is AIAdjustment and k == "created_by_user_id")
+                }
                 values["user_id"] = user.id
                 if model is RunningSession or model is StrengthSession:
                     old_week_id = row.get("week_id")
@@ -83,19 +97,27 @@ def restore_json(s, text: str, user=None) -> dict[str, int]:
                 s.flush()
                 if model is TrainingWeek:
                     week_ids[row.get("id")] = obj.id
-            counts[name] = len(tables[name])
+                restored_count += 1
+            counts[name] = restored_count
         return counts
 
     for model in reversed(list(TABLES.values())):
-        for o in s.scalars(select(model)).all():
+        query = select(model)
+        if model is Setting:
+            query = query.where(Setting.key.notin_(("garmin_email_enc", "garmin_password_enc")))
+        for o in s.scalars(query).all():
             s.delete(o)
     s.flush()
     counts = {}
     for name, model in TABLES.items():
         cols = model.__table__.columns
+        restored_count = 0
         for row in tables[name]:
+            if model is Setting and row.get("key") in {"garmin_email_enc", "garmin_password_enc"}:
+                continue
             s.add(model(**{k: _parse(cols[k], v) for k, v in row.items()}))
-        counts[name] = len(tables[name])
+            restored_count += 1
+        counts[name] = restored_count
     s.flush()
     return counts
 

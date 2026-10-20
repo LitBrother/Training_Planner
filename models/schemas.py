@@ -47,7 +47,10 @@ class AIProposal(BaseModel):
     """Extra fields (e.g. new_date) are forbidden so sessions can never be moved."""
     model_config = ConfigDict(extra="forbid")
     session_date: date
-    kind: Literal["reduce_volume", "simplify_quality", "increase_recovery"]
+    kind: Literal[
+        "reduce_volume", "simplify_quality", "increase_recovery",
+        "increase_volume", "restore_volume", "maintain",
+    ]
     new_km: float = Field(ge=0)
     new_type: Optional[str] = None
     reason: str = ""

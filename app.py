@@ -13,6 +13,8 @@ pages = [
     st.Page("pages/ai_coach.py", title="AI Coach", icon="🤖"),
     st.Page("pages/progress.py", title="Progress", icon="📈"),
     st.Page("pages/notes.py", title="Notes", icon="📝"),
+    st.Page("pages/strength.py", title="Strength", icon="🏋️"),
+    st.Page("pages/friends.py", title="Friends", icon="👥"),
     st.Page("pages/settings.py", title="Settings", icon="⚙️"),
 ]
 st.navigation(pages).run()

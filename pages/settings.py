@@ -8,6 +8,8 @@ from models.schemas import PlanSettings
 from services import export_service as ex
 from services import plan_service as ps
 from services.garmin_sync import fetch_runs, garmin_credentials
+from services import garmin_accounts
+from services.garmin_link import auto_link
 from services.auth import runtime_config
 from services import coaching
 from services.ai_service import upcoming_sessions
@@ -66,7 +68,43 @@ st.caption("Your hosted database persists across app restarts. Keep a JSON backu
 st.subheader("Garmin sync")
 hosted = runtime_config()[0] is not None
 if hosted:
-    st.info("Garmin connections are not yet isolated per account. Connect Garmin after per-user integration is added.")
+    st.caption("Credentials are encrypted in the database using GARMIN_ENCRYPTION_KEY from Streamlit Secrets.")
+    with session_scope() as gs:
+        g_user = get_app_user(gs)
+        try:
+            credentials = garmin_accounts.credentials(gs, g_user)
+        except RuntimeError as exc:
+            credentials = None
+            st.warning(str(exc))
+    with st.form("garmin_account", clear_on_submit=True):
+        garmin_email = st.text_input("Your Garmin email", value=credentials[0] if credentials else "")
+        garmin_password = st.text_input("Your Garmin password", type="password")
+        save_garmin = st.form_submit_button("Save Garmin connection")
+    if save_garmin:
+        try:
+            with session_scope() as gs:
+                garmin_accounts.save_credentials(gs, get_app_user(gs), garmin_email, garmin_password)
+            st.success("Garmin credentials encrypted and saved for this account.")
+            st.rerun()
+        except (ValueError, RuntimeError) as exc:
+            st.error(f"Could not save Garmin connection: {exc}")
+    if credentials and st.button("Remove saved Garmin connection"):
+        with session_scope() as gs:
+            garmin_accounts.remove_credentials(gs, get_app_user(gs))
+        st.session_state.pop("garmin_runs", None)
+        st.success("Garmin connection removed.")
+        st.rerun()
+    if credentials and st.button("Sync my Garmin runs"):
+        try:
+            with st.spinner("Contacting Garmin..."):
+                with session_scope() as gs:
+                    g_user = get_app_user(gs)
+                    runs = garmin_accounts.fetch_account_runs(gs, g_user)
+                    linked = auto_link(gs, g_user, runs)
+                st.session_state["garmin_runs"] = runs
+            st.success(f"Synced {len(runs)} runs; linked {linked} to your plan.")
+        except Exception as exc:
+            st.error(f"Garmin sync failed: {exc}")
 elif st.button("Sync last 30 days from Garmin"):
     try:
         with st.spinner("Contacting Garmin..."):

@@ -17,9 +17,11 @@ def fetch_runs_cached(email: str, password: str, days: int = 35) -> list[dict]:
     return fetch_runs(email, password, days)
 
 
-def fetch_runs(email: str, password: str, days: int = 30) -> list[dict]:
+def fetch_runs(email: str, password: str, days: int = 30, token_dir: Path | None = None) -> list[dict]:
     client = Garmin(email, password)
-    client.login(str(TOKEN_DIR))  # reuses saved tokens, saves them after a fresh login
+    token_path = token_dir or TOKEN_DIR
+    token_path.mkdir(parents=True, exist_ok=True)
+    client.login(str(token_path))  # reuses saved tokens, saves them after a fresh login
     end = date.today()
     start = end - timedelta(days=days)
     acts = client.get_activities_by_date(start.isoformat(), end.isoformat(), "running")
