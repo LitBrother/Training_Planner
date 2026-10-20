@@ -13,6 +13,7 @@ from utils.bootstrap import get_app_user, ready
 
 ready()
 st.title("🏋️ Strength")
+st.page_link("pages/ai_coach.py", label="Review my training for AI-guided strength progression", icon="🤖")
 
 st.subheader("Lift progression")
 with session_scope() as s:

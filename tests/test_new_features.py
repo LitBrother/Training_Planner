@@ -5,12 +5,14 @@ from cryptography.fernet import Fernet
 from sqlalchemy import select
 
 from database.session import session_scope
-from models.orm import AIAdjustment, StrengthLog
-from models.schemas import PlanSettings
+from models.orm import AIAdjustment, StrengthLog, StrengthSession
+from models.schemas import AthleteProfileInput, PlanSettings
 from services import ai_service as ai
 from services import export_service as ex
 from services import garmin_accounts
 from services import plan_service as ps
+from services.athlete_profile import get_profile, save_profile
+from services.plan_generator import generate_plan
 from tests.conftest import START
 from utils.dates import monday_of
 
@@ -105,6 +107,96 @@ def test_ai_context_includes_strength_progression(db):
                        "estimated_1rm_kg": 76.0},
             "best_estimated_1rm_kg": 76.0,
         }]
+
+
+def test_athlete_profile_setup_synchronizes_settings_and_builds_open_ended_plan(db):
+    with session_scope() as s:
+        user = ps.ensure_user(s)
+        profile = save_profile(s, user, {
+            "user_name": "Runner",
+            "training_focus": "Running",
+            "experience_level": "Beginner",
+            "age": None,
+            "body_weight_kg": None,
+            "goal": "Build a consistent running habit",
+            "share_garmin_recovery_with_ai": False,
+        })
+        cfg = ps.get_settings(s, user)
+        weeks = ps.list_weeks(s, user)
+
+        assert profile.completed
+        assert profile.training_focus == cfg.training_focus == "Running"
+        assert profile.goal == cfg.goal == "Build a consistent running habit"
+        assert cfg.race_date is None
+        assert len(weeks) == cfg.horizon_weeks
+        assert all(week.phase != "Race Week" for week in weeks)
+        assert not s.scalars(select(StrengthSession).where(StrengthSession.user_id == user.id)).first()
+        assert all(run.run_type != "Race" for run in ps.all_runs(s, user))
+        assert cfg.start_long_km == 5.0 and cfg.peak_long_km == 12.0
+
+        backup = ex.to_json(s, user)
+        profile.goal = "Temporary edit"
+        ex.restore_json(s, backup, user)
+        assert get_profile(s, user).goal == "Build a consistent running habit"
+
+
+def test_profile_validation_and_focus_specific_plan_shapes():
+    with pytest.raises(ValueError):
+        AthleteProfileInput.model_validate({
+            "user_name": "Runner",
+            "training_focus": "Cycling",
+            "experience_level": "Beginner",
+            "goal": "Train consistently",
+        })
+
+    start = monday_of(date.today())
+    end = start + timedelta(weeks=5)
+    strength_plan = generate_plan(start, end, include_race_week=False, training_focus="Strength")
+    running_plan = generate_plan(start, end, include_race_week=False, training_focus="Running")
+    assert all(not week["runs"] and week["strength"] for week in strength_plan)
+    assert all(week["runs"] and not week["strength"] for week in running_plan)
+    assert not any(run["run_type"] == "Race" for week in running_plan for run in week["runs"])
+
+
+def test_custom_race_distance_and_safe_strength_advice_validation():
+    start = monday_of(date.today())
+    race_date = start + timedelta(weeks=6)
+    plan = generate_plan(start, race_date, race_distance_km=10.0)
+    race = next(run for week in plan for run in week["runs"] if run["slot"] == "race")
+    assert race["run_type"] == "Race" and race["km"] == 10.0
+
+    history = [{
+        "exercise": "Squat",
+        "latest": {"weight_kg": 60.0, "sets": 3, "reps_per_set": 8},
+    }]
+    accepted, errors = ai.validate_strength_advice([{
+        "exercise": "Squat",
+        "next_weight_kg": 64.0,
+        "target_reps": 8,
+        "reason": "Progress gradually.",
+        "evidence_ids": ["ACSM-RT-2009"],
+    }], history)
+    assert not errors and accepted[0]["next_weight_kg"] == 64.0
+
+    accepted, errors = ai.validate_strength_advice([{
+        "exercise": "Squat",
+        "next_weight_kg": 67.0,
+        "target_reps": 8,
+        "reason": "Too large a jump.",
+        "evidence_ids": ["unverified"],
+    }], history)
+    assert not accepted and len(errors) == 1
+
+
+def test_garmin_wellness_context_requires_profile_consent(db):
+    recovery = {"sleep_hours": 7.5, "hrv": 42}
+    with session_scope() as s:
+        user = ps.ensure_user(s)
+        profile = get_profile(s, user)
+        profile.share_garmin_recovery_with_ai = False
+        assert "garmin_wellness" not in ai.build_context(s, user, START, garmin_wellness=recovery)
+        profile.share_garmin_recovery_with_ai = True
+        assert ai.build_context(s, user, START, garmin_wellness=recovery)["garmin_wellness"] == recovery
 
 
 def test_garmin_credentials_are_encrypted_and_account_scoped(db, monkeypatch):

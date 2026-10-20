@@ -48,14 +48,23 @@ RUN_GUIDANCE = {
         common_errors="Turning steady into threshold; skipping warm-up.",
         reduce_when="Shorten the block by a third if heavy-legged."),
     "Marathon Pace": dict(
-        purpose="Race-specific preparation and pacing practice.",
+        purpose="Goal-event preparation and pacing practice.",
         warm_up="10-15 min easy plus 2-3 short strides.",
-        main_set="{km} km total including marathon-pace blocks (e.g. 2-4 x 2-3 km), built up gradually.",
+        main_set="{km} km total including controlled goal-pace blocks, built up gradually.",
         recovery="2-3 min easy jog between blocks.",
         cool_down="10 min easy.",
         rpe="5-6/10", talk_test="Short sentences; controlled and sustainable.",
-        common_errors="Running faster than goal pace; forcing blocks when fatigued.",
+        common_errors="Running faster than goal effort; forcing blocks when fatigued.",
         reduce_when="Cut one block or run by feel if fatigued, hot or under-fuelled."),
+    "Goal Pace": dict(
+        purpose="Goal-event preparation and pacing practice.",
+        warm_up="10-15 min easy plus 2-3 short strides.",
+        main_set="{km} km total including controlled goal-pace blocks, built up gradually.",
+        recovery="2-3 min easy jog between blocks.",
+        cool_down="10 min easy.",
+        rpe="5-6/10", talk_test="Short sentences; controlled and sustainable.",
+        common_errors="Running faster than goal effort; forcing blocks when fatigued.",
+        reduce_when="Cut a block or run by feel if fatigued, hot or under-fuelled."),
     "Threshold": dict(
         purpose="Sustainable speed development.",
         warm_up="15 min easy plus 3 strides.",
@@ -77,21 +86,22 @@ RUN_GUIDANCE = {
     "Long Run": dict(
         purpose="Endurance, fueling and durability.",
         warm_up="First 15-20 min very easy.",
-        main_set="{km} km conversational. Practise race-day fueling every 30-40 min.",
+        main_set="{km} km conversational. Practise fuelling for longer events every 30-40 min.",
         recovery="Walk breaks as needed.",
         cool_down="Last 5 min walk; refuel within 30-60 min.",
         rpe="3-4/10", talk_test="Conversation is comfortable throughout.",
         common_errors="Starting too fast; under-fueling; hilly overreach.",
         reduce_when="Cut distance 10-20% if heavy-legged, ill or hot. Never make up missed long runs."),
     "Long Run MP": dict(
-        purpose="Endurance, fueling, and marathon-pace finishing practice.",
+        purpose="Endurance, fuelling, and controlled goal-effort finishing practice.",
         warm_up="First 15-20 min very easy.",
-        main_set="{km} km: easy for the first part, then final ~{mp} km at marathon pace. Practise race-day fueling.",
-        recovery="Walk breaks as needed before the MP block.",
+        main_set="{km} km: easy for the first part, then a short controlled goal-effort finish if feeling good.",
+        recovery="Walk breaks as needed before the goal-effort block.",
         cool_down="5 min easy jog/walk; refuel within 30-60 min.",
-        rpe="3-4/10 easy, 5-6/10 MP finish", talk_test="Conversational early; short sentences in the MP block.",
-        common_errors="Easy section too fast; MP block too fast.",
-        reduce_when="Drop the MP block and run easy if fatigued. Never make up missed long runs."),
+        rpe="3-4/10 easy, 5-6/10 goal-effort finish",
+        talk_test="Conversational early; short sentences during the goal-effort block.",
+        common_errors="Starting the easy section too fast; pushing the goal-effort block.",
+        reduce_when="Drop the goal-effort block and run easy if fatigued. Never make up missed long runs."),
     "Shakeout": dict(
         purpose="Stay loose and fresh.",
         warm_up="Walk 3 min.",
@@ -103,7 +113,7 @@ RUN_GUIDANCE = {
     "Race": dict(
         purpose="Goal race: execute your pacing plan.",
         warm_up="10 min walk/jog and 2-3 strides if comfortable.",
-        main_set="42.2 km. Start controlled, settle into goal pace, fuel on schedule.",
+        main_set="{km} km. Start controlled, settle into goal effort, fuel as planned.",
         recovery="Walk through aid stations as needed.",
         cool_down="Walk and refuel after the finish.",
         rpe="5-6/10 first half, rising late", talk_test="Short sentences early on.",
@@ -121,7 +131,7 @@ RUN_GUIDANCE = {
 
 
 def run_guidance(run_type: str, variant: str, km: float) -> dict:
-    key = "Long Run MP" if run_type == "Long Run" and "MP" in (variant or "") else run_type
+    key = "Long Run MP" if run_type == "Long Run" and "Goal Pace" in (variant or "") else run_type
     g = dict(RUN_GUIDANCE.get(key, RUN_GUIDANCE["Easy"]))
     mp = max(3, min(8, round(km * 0.2)))
     g["main_set"] = g["main_set"].format(km=f"{km:g}", mp=mp)

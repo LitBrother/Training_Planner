@@ -11,13 +11,14 @@ from services.adjustments import INTENSITY, adjust_km, apply_event_week, complet
 from services.plan_generator import generate_plan
 from utils.dates import monday_of
 
-GOAL_NAME = "Goal Marathon"
+GOAL_NAME = "Goal Event"
+LEGACY_GOAL_NAMES = {GOAL_NAME, "Goal Marathon"}
 EVENT_TYPES = {"5km": 5.0, "10km": 10.0, "Half marathon": 21.1, "Marathon": 42.2, "Trail race": 0.0, "Custom": 0.0}
 
 
 # ---------------------------------------------------------------- users / settings
 def ensure_user(
-    s, name: str = "Adam Williams", auth_uid: str | None = None, email: str | None = None
+    s, name: str = "Athlete", auth_uid: str | None = None, email: str | None = None
 ) -> User:
     if auth_uid:
         u = s.scalars(select(User).where(User.auth_uid == auth_uid)).first()
@@ -75,8 +76,11 @@ def ensure_defaults(s, user) -> None:
 # ---------------------------------------------------------------- plan sync
 def sync_plan(s, user, cfg: PlanSettings, today: date | None = None) -> None:
     """Regenerate plan from settings, preserving logged sessions."""
-    plan = generate_plan(cfg.plan_start, cfg.end_date, cfg.peak_long_km, cfg.start_long_km,
-                         cfg.effective_taper, cfg.weekend_day)
+    plan = generate_plan(
+        cfg.plan_start, cfg.end_date, cfg.peak_long_km, cfg.start_long_km,
+        cfg.effective_taper, cfg.weekend_day, include_race_week=cfg.race_date is not None,
+        training_focus=cfg.training_focus, race_distance_km=cfg.race_distance_km,
+    )
     ew = {w.week_start: w for w in s.scalars(select(TrainingWeek).where(TrainingWeek.user_id == user.id))}
     er = {r.date: r for r in s.scalars(select(RunningSession).where(RunningSession.user_id == user.id))}
     es = {x.date: x for x in s.scalars(select(StrengthSession).where(StrengthSession.user_id == user.id))}
@@ -128,10 +132,12 @@ def sync_plan(s, user, cfg: PlanSettings, today: date | None = None) -> None:
         if goal is not None:
             s.delete(goal)
     elif goal is None:
-        s.add(Event(user_id=user.id, name=GOAL_NAME, event_type="Marathon", date=cfg.race_date,
-                    distance_km=42.2, priority="A", notes="Goal race"))
+        s.add(Event(user_id=user.id, name=GOAL_NAME, event_type="Goal Event", date=cfg.race_date,
+                    distance_km=cfg.race_distance_km, priority="A", notes="User goal event"))
     else:
         goal.date = cfg.race_date
+        goal.distance_km = cfg.race_distance_km
+        goal.event_type = "Goal Event"
     s.flush()
     recalc(s, user, today)
 
@@ -165,7 +171,8 @@ def _current_factor(weeks, by, cur: date) -> float:
 
 
 def _week_event(events, ws: date):
-    cands = [e for e in events if e.name != GOAL_NAME and ws <= e.date <= ws + timedelta(days=6) and e.distance_km]
+    cands = [e for e in events if e.name not in LEGACY_GOAL_NAMES
+             and ws <= e.date <= ws + timedelta(days=6) and e.distance_km]
     return max(cands, key=lambda e: e.distance_km, default=None)
 
 

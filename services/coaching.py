@@ -43,7 +43,7 @@ def analyze(runs: list[dict], today: date, max_hr: int = DEFAULT_MAX_HR) -> dict
 
 
 NOTES = {
-    "long": "Slow down. Run 45-90 s/km slower than marathon pace, HR in zone 2. Practise fuelling: 30-60 g carbs/hour.",
+    "long": "Keep an easy, conversational effort and practise fuelling for long sessions.",
     "easy": "Conversational pace. If you can't speak in full sentences, slow down.",
     "recovery": "Very easy and short. The goal is to absorb training, not add to it.",
     "tempo": "Comfortably hard, steady effort. Warm up 10-15 min and keep the pace even.",

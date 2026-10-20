@@ -7,6 +7,7 @@ from database.session import session_scope
 from models.schemas import PlanSettings
 from services import export_service as ex
 from services import plan_service as ps
+from services.athlete_profile import get_profile
 from services.garmin_sync import fetch_runs, garmin_credentials
 from services import garmin_accounts
 from services.garmin_link import auto_link
@@ -24,11 +25,16 @@ with session_scope() as s:
     cfg = ps.get_settings(s, user)
     with st.form("settings"):
         name = st.text_input("Name", cfg.user_name)
-        has_goal = st.checkbox("I have a goal race", value=cfg.race_date is not None)
-        race = st.date_input("Race date", cfg.race_date or date.today()) if has_goal else None
+        focus = st.selectbox("Training focus", ["Running", "Strength", "Both"],
+                             index=["Running", "Strength", "Both"].index(cfg.training_focus))
+        goal = st.text_input("Training goal", cfg.goal)
+        has_goal = st.checkbox("I have a goal event", value=cfg.race_date is not None)
+        race = st.date_input("Goal event date", cfg.race_date or date.today()) if has_goal else None
+        race_distance = st.number_input("Goal event distance (km)", 1.0, 100.0, cfg.race_distance_km, 0.1,
+                                        disabled=not has_goal)
         horizon = st.number_input("Plan length (weeks)", 4, 104, cfg.horizon_weeks, disabled=has_goal)
         start = st.date_input("Plan start", cfg.plan_start)
-        peak = st.number_input("Peak long run (km)", 20.0, 38.0, cfg.peak_long_km, 0.5)
+        peak = st.number_input("Peak long run (km)", 8.0, 38.0, cfg.peak_long_km, 0.5)
         start_long = st.number_input("Starting long run (km)", 5.0, 30.0, cfg.start_long_km, 0.5)
         taper = st.number_input("Taper length (weeks)", 1, 4, cfg.taper_weeks)
         wk = st.selectbox("Weekend run day", ["Saturday", "Sunday"], index=["Saturday", "Sunday"].index(cfg.weekend_day))
@@ -37,12 +43,15 @@ with session_scope() as s:
         model = st.selectbox("Gemini model", models, index=models.index(current))
         if st.form_submit_button("Save and regenerate plan"):
             try:
-                new = PlanSettings(user_name=name, race_date=race, plan_start=start, peak_long_km=peak,
+                new = PlanSettings(user_name=name, race_date=race, race_distance_km=race_distance,
+                                   training_focus=focus, goal=goal, plan_start=start, peak_long_km=peak,
                                    start_long_km=start_long, taper_weeks=int(taper),
                                    weekend_day=cast(Literal["Saturday", "Sunday"], wk),
-                                   openai_model=model)
+                                   openai_model=model, horizon_weeks=int(horizon))
                 ps.save_settings(s, user, new)
                 ps.sync_plan(s, user, new)
+                profile = get_profile(s, user)
+                profile.training_focus, profile.goal = focus, goal.strip()
                 st.success("Saved. Logged sessions were preserved.")
                 st.session_state.pop("_synced", None)
             except (ValidationError, ValueError) as exc:
@@ -51,10 +60,10 @@ with session_scope() as s:
 
     st.subheader("Data")
     c = st.columns(3)
-    c[0].download_button("Excel export", ex.to_excel(s, user), "marathon_planner.xlsx")
+    c[0].download_button("Excel export", ex.to_excel(s, user), "training_planner.xlsx")
     table = c[1].selectbox("CSV table", list(ex.TABLES))
     c[2].download_button("CSV export", ex.table_csv(s, table, user), f"{table}.csv", "text/csv")
-    st.download_button("JSON backup", ex.to_json(s, user), "marathon_backup.json", "application/json")
+    st.download_button("JSON backup", ex.to_json(s, user), "training_planner_backup.json", "application/json")
     up = st.file_uploader("JSON restore", type="json")
     if up and st.checkbox("I understand this replaces my account's training data") and st.button("Restore backup"):
         try:
@@ -100,6 +109,7 @@ if hosted:
                 with session_scope() as gs:
                     g_user = get_app_user(gs)
                     runs = garmin_accounts.fetch_account_runs(gs, g_user)
+                    st.session_state["garmin_wellness"] = garmin_accounts.fetch_account_wellness(gs, g_user)
                     linked = auto_link(gs, g_user, runs)
                 st.session_state["garmin_runs"] = runs
             st.success(f"Synced {len(runs)} runs; linked {linked} to your plan.")
@@ -108,8 +118,12 @@ if hosted:
 elif st.button("Sync last 30 days from Garmin"):
     try:
         with st.spinner("Contacting Garmin..."):
-            runs = fetch_runs(*garmin_credentials())
-        st.session_state["garmin_runs"] = runs
+            credentials = garmin_credentials()
+            runs = fetch_runs(*credentials)
+            from services.garmin_sync import fetch_wellness
+            st.session_state["garmin_wellness"] = fetch_wellness(*credentials)
+            st.session_state["garmin_runs"] = runs
+            st.success(f"Synced {len(runs)} runs and recent available recovery metrics.")
     except Exception as exc:
         st.error(f"Garmin sync failed: {exc}")
 if "garmin_runs" in st.session_state:

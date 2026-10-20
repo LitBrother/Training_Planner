@@ -2,7 +2,8 @@
 
 INTENSITY = {
     "Rest": 0, "Recovery": 1, "Shakeout": 1, "Easy": 2, "Easy + Strides": 2, "Long Run": 3,
-    "Steady": 4, "Marathon Pace": 5, "Fartlek": 6, "Threshold": 7, "Intervals": 8, "Event": 9, "Race": 9,
+    "Steady": 4, "Marathon Pace": 5, "Goal Pace": 5, "Fartlek": 6, "Threshold": 7, "Intervals": 8,
+    "Event": 9, "Race": 9,
 }
 
 

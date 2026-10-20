@@ -10,7 +10,8 @@ from sqlalchemy import select
 
 from models.orm import AIAdjustment, Event, Note, RunningSession, TrainingWeek
 from models.schemas import AIProposal
-from services import coaching, plan_service as ps
+from services import coaching, evidence, plan_service as ps
+from services.athlete_profile import as_context, get_profile
 from services.adjustments import INTENSITY, rank
 from services.strength_progress import est_1rm
 from utils.dates import monday_of
@@ -19,10 +20,12 @@ truststore.inject_into_ssl()
 
 GEMINI_URL = "https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent"
 
-SYSTEM_PROMPT = """You are a cautious marathon-coaching assistant reviewing a runner's plan.
-Return ONLY JSON: {"summary": str, "proposals": [{"session_date": "YYYY-MM-DD", "kind":
+SYSTEM_PROMPT = """You are a cautious, evidence-informed exercise coach.
+Adapt the guide to the athlete's selected activity focus, experience, and stated goal. Do not presume
+they are training for a marathon. Return ONLY JSON: {"summary": str, "proposals": [{"session_date": "YYYY-MM-DD", "kind":
 "reduce_volume|simplify_quality|increase_recovery|increase_volume|restore_volume|maintain",
-"new_km": number, "new_type": string|null, "reason": str}]}.
+"new_km": number, "new_type": string|null, "reason": str}], "strength_advice": [{"exercise": str,
+"next_weight_kg": number, "target_reps": int, "reason": str, "evidence_ids": [str]}]}.
 Rules: cautiously increase or reduce volume, or simplify intensity; never move sessions or remove the taper.
 Never exceed 110% of original session or weekly planned km, or the configured peak long-run distance.
 Never increase mileage in taper or race week. Do not recommend increases for race/event sessions.
@@ -30,7 +33,18 @@ Only reference sessions listed in 'upcoming'. Do not give medical advice; for pa
 qualified professional. If no change is needed return an empty proposals list.
 Use 'recent_runs' (real Garmin data: km, minutes, pace in min/km, avg HR), 'load', recent weekly completion,
 training notes, and strength_history to justify coaching. Compare actual weekly km to planned. Mention easy-run
-pace/HR drift, missed sessions, and strength progression where relevant. Cite numbers in each reason."""
+pace/HR drift, missed sessions, and strength progression where relevant. Use only evidence_ids supplied under
+research_sources; do not invent studies, citations, or numerical prescriptions attributed to research. For
+opt-in Garmin sleep, HRV, resting-heart-rate, stress, battery, or readiness data, discuss multi-day patterns
+cautiously; consumer wearables are not medical diagnostics and a single score must not drive a plan change. For
+strength advice, use only exercises the athlete logged, never suggest >10% above their latest load, and only
+recommend adding load when the logged repetitions suggest the current load is manageable. State that the athlete
+should increase only if the target reps were completed with good form and without pain. Do not infer fitness age,
+health status, or training potential from age or body weight; do not prescribe weight from body weight."""
+
+
+def athlete_context(s, user) -> dict:
+    return as_context(get_profile(s, user))
 
 
 def upcoming_sessions(s, user, today: date, days: int = 14) -> dict[date, dict]:
@@ -50,10 +64,12 @@ def upcoming_sessions(s, user, today: date, days: int = 14) -> dict[date, dict]:
             for r in s.scalars(q)}
 
 
-def build_context(s, user, today: date, garmin_runs: list[dict] | None = None) -> dict:
+def build_context(s, user, today: date, garmin_runs: list[dict] | None = None,
+                  garmin_wellness: dict | None = None) -> dict:
     weeks = [w for w in ps.list_weeks(s, user) if w.week_start < monday_of(today)][-4:]
     events = [e for e in ps.list_events(s, user) if today <= e.date <= today + timedelta(days=56)]
     notes = [n for n in ps.list_notes(s, user) if n.date >= today - timedelta(days=21)]
+    profile = get_profile(s, user)
     ctx = {
         "today": today.isoformat(),
         "recent_weeks": [{"week_start": w.week_start.isoformat(), "planned": w.planned_km, "adjusted": w.adjusted_km,
@@ -63,10 +79,14 @@ def build_context(s, user, today: date, garmin_runs: list[dict] | None = None) -
         "notes": [{"date": n.date.isoformat(), "category": n.category, "text": n.text} for n in notes],
         "upcoming": list(upcoming_sessions(s, user, today).values()),
         "strength_history": strength_history(s, user, today),
+        "athlete_profile": as_context(profile),
+        "research_sources": evidence.SOURCES,
     }
     if garmin_runs:
         ctx["recent_runs"] = coaching.compact_runs(garmin_runs, today)
         ctx["load"] = coaching.analyze(garmin_runs, today)
+    if garmin_wellness and profile.share_garmin_recovery_with_ai:
+        ctx["garmin_wellness"] = garmin_wellness
     return ctx
 
 
@@ -93,7 +113,7 @@ def strength_history(s, user, today: date) -> list[dict]:
     ]
 
 
-def request_proposals(context: dict, api_key: str, model: str) -> tuple[str, list[dict]]:
+def request_proposals(context: dict, api_key: str, model: str) -> tuple[str, list[dict], list[dict]]:
     if not model.startswith("gemini"):
         model = "gemini-3.5-flash-lite"
     payload = {
@@ -129,7 +149,59 @@ def request_proposals(context: dict, api_key: str, model: str) -> tuple[str, lis
         raise RuntimeError(f"Gemini error {resp.status_code}: {resp.text[:300]}")
     text = resp.json()["candidates"][0]["content"]["parts"][0]["text"]
     data = json.loads(text or "{}")
-    return str(data.get("summary", "")), list(data.get("proposals", []))
+    return (
+        str(data.get("summary", "")),
+        list(data.get("proposals", [])),
+        list(data.get("strength_advice", [])),
+    )
+
+
+def validate_strength_advice(raw: list, history: list[dict]) -> tuple[list[dict], list[str]]:
+    known = {row["exercise"].casefold(): row for row in history}
+    verified_sources = {source["id"] for source in evidence.SOURCES}
+    accepted: list[dict] = []
+    errors: list[str] = []
+    seen: set[str] = set()
+    for index, item in enumerate(raw, start=1):
+        if not isinstance(item, dict):
+            errors.append(f"Strength suggestion #{index}: expected an object.")
+            continue
+        name = str(item.get("exercise", "")).strip()
+        exercise = known.get(name.casefold())
+        if exercise is None:
+            errors.append(f"Strength suggestion #{index}: exercise has no logged training history.")
+            continue
+        key = exercise["exercise"].casefold()
+        if key in seen:
+            errors.append(f"Strength suggestion #{index}: duplicate exercise.")
+            continue
+        latest = exercise["latest"]
+        try:
+            weight = float(item["next_weight_kg"])
+            reps = int(item["target_reps"])
+        except (KeyError, TypeError, ValueError):
+            errors.append(f"Strength suggestion #{index}: invalid target weight or reps.")
+            continue
+        if latest["weight_kg"] <= 0 or weight < 0 or weight > latest["weight_kg"] * 1.1 + 1e-9:
+            errors.append(f"Strength suggestion #{index}: target load exceeds the 10% progression limit.")
+            continue
+        if not 1 <= reps <= 15:
+            errors.append(f"Strength suggestion #{index}: target reps must be between 1 and 15.")
+            continue
+        ids = item.get("evidence_ids", [])
+        if not isinstance(ids, list) or any(value not in verified_sources for value in ids):
+            errors.append(f"Strength suggestion #{index}: contains an unverified research citation.")
+            continue
+        accepted.append({
+            "exercise": exercise["exercise"],
+            "latest_weight_kg": latest["weight_kg"],
+            "next_weight_kg": round(weight, 2),
+            "target_reps": reps,
+            "reason": str(item.get("reason", ""))[:500],
+            "evidence_ids": ids,
+        })
+        seen.add(key)
+    return accepted, errors
 
 
 def validate_proposals(raw: list, upcoming: dict[date, dict]) -> tuple[list[AIProposal], list[str]]:

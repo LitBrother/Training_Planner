@@ -9,7 +9,7 @@ from utils import charts
 from utils.bootstrap import get_app_user, ready
 
 ready()
-st.title("🏃 Adam's Marathon Planner")
+st.title("🏃 Training Planner")
 
 with session_scope() as s:
     user = get_app_user(s)
@@ -21,9 +21,9 @@ if info is None:
     st.stop()
 
 if info["race_date"]:
-    st.caption(f"Welcome, {user.name}. Goal: marathon on {info['race_date']:%A %d %B %Y}.")
+    st.caption(f"Welcome, {user.name}. Goal event: {info['race_date']:%A %d %B %Y}.")
 else:
-    st.caption(f"Welcome, {user.name}. Open-ended training, no goal race set.")
+    st.caption(f"Welcome, {user.name}. Your training goal is flexible; no event is required.")
 
 d = info["days_to_race"]
 c = st.columns(4)

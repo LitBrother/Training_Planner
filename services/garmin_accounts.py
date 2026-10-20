@@ -6,7 +6,7 @@ import streamlit as st
 from streamlit.errors import StreamlitSecretNotFoundError
 
 from models.orm import Setting
-from services.garmin_sync import fetch_runs
+from services.garmin_sync import fetch_runs, fetch_wellness
 
 TOKEN_ROOT = Path(__file__).resolve().parent.parent / ".garmin_tokens"
 
@@ -80,3 +80,11 @@ def fetch_account_runs(s, user, days: int = 35) -> list[dict]:
         raise RuntimeError("Save your Garmin connection in Settings first.")
     email, password = details
     return fetch_runs(email, password, days, TOKEN_ROOT / str(user.id))
+
+
+def fetch_account_wellness(s, user, days: int = 7) -> dict:
+    details = credentials(s, user)
+    if not details:
+        raise RuntimeError("Save your Garmin connection in Settings first.")
+    email, password = details
+    return fetch_wellness(email, password, days, TOKEN_ROOT / str(user.id))

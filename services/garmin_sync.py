@@ -3,7 +3,7 @@ from pathlib import Path
 
 import streamlit as st
 import truststore
-from garminconnect import Garmin
+from garminconnect import Garmin, GarminConnectNotFoundError
 
 from services.auth import runtime_config
 
@@ -36,6 +36,74 @@ def fetch_runs(email: str, password: str, days: int = 30, token_dir: Path | None
         }
         for a in acts
     ]
+
+
+def _compact_wellness(payload, measure_keys: set[str]) -> list[dict]:
+    by_date: dict[str, dict] = {}
+
+    def walk(value, current_date: str = "recent") -> None:
+        if isinstance(value, dict):
+            found_date = next(
+                (str(value[k])[:10] for k in ("calendarDate", "date") if value.get(k)),
+                current_date,
+            )
+            row = by_date.setdefault(found_date, {"date": found_date})
+            for key, item in value.items():
+                if key in measure_keys and isinstance(item, (str, int, float, bool)):
+                    row[key] = item
+                elif isinstance(item, (dict, list)):
+                    walk(item, found_date)
+        elif isinstance(value, list):
+            for item in value:
+                walk(item, current_date)
+
+    walk(payload)
+    return [by_date[key] for key in sorted(by_date)][-14:]
+
+
+def fetch_wellness(email: str, password: str, days: int = 7,
+                   token_dir: Path | None = None) -> dict:
+    client = Garmin(email, password)
+    token_path = token_dir or TOKEN_DIR
+    token_path.mkdir(parents=True, exist_ok=True)
+    client.login(str(token_path))
+    end = date.today()
+    start = end - timedelta(days=max(1, days - 1))
+    start_s, end_s = start.isoformat(), end.isoformat()
+    metrics = {}
+    unavailable = []
+    endpoints = [
+        ("sleep", lambda: client.get_sleep_daily(start_s, end_s),
+         {"totalSleepSeconds", "sleepTimeSeconds", "sleepScore", "averageSpO2", "deepSleepSeconds",
+          "lightSleepSeconds", "remSleepSeconds", "awakeSleepSeconds", "sleepDurationSeconds"}),
+        ("hrv", lambda: client.get_hrv_data_range(start_s, end_s),
+         {"lastNightAvg", "weeklyAvg", "baseline", "status", "hrvValue"}),
+        ("training_readiness", lambda: client.get_training_readiness_range(start_s, end_s),
+         {"score", "trainingReadinessScore", "recoveryTime", "inputContext", "sleepScore"}),
+        ("stress", lambda: client.get_daily_stress_stats(start_s, end_s),
+         {"overallStressLevel", "averageStressLevel", "maxStressLevel", "stressDuration", "restDuration"}),
+        ("body_battery", lambda: client.get_daily_body_battery_stats(start_s, end_s),
+         {"charged", "drained", "bodyBatteryMostRecentValue", "bodyBatteryAtWakeTime",
+          "lowestBodyBatteryValue", "highestBodyBatteryValue"}),
+    ]
+    for name, fetch, keys in endpoints:
+        try:
+            result = fetch()
+        except GarminConnectNotFoundError:
+            unavailable.append(name)
+            continue
+        if result:
+            metrics[name] = _compact_wellness(result, keys)
+    try:
+        resting = client.get_week_average_resting_hr(end_s)
+    except GarminConnectNotFoundError:
+        unavailable.append("resting_heart_rate")
+    else:
+        if resting:
+            metrics["resting_heart_rate"] = _compact_wellness(
+                resting, {"weeklyAverage", "last7DaysAvg", "restingHeartRate"}
+            )
+    return {"period": {"start": start_s, "end": end_s}, "metrics": metrics, "unavailable": unavailable}
 
 
 def garmin_credentials() -> tuple[str, str]:

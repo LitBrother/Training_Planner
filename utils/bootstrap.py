@@ -8,6 +8,7 @@ from database.session import configure, session_scope
 from services import auth
 from services.auth import AuthError
 from services import plan_service as ps
+from services.athlete_profile import get_profile
 from services.garmin_link import auto_link
 from services.garmin_sync import fetch_runs_cached, garmin_credentials
 
@@ -32,7 +33,10 @@ def ready() -> None:
     identity = auth.current_identity(anon_key) if database_url and anon_key else None
     identity_key = identity[0] if identity else "local"
     if st.session_state.get("_initialized_identity") != identity_key:
-        for key in ("garmin_runs", "garmin_msg", "ai_summary", "ai_errors", "openai_key"):
+        for key in (
+            "garmin_runs", "garmin_wellness", "garmin_msg", "ai_summary", "ai_errors",
+            "ai_strength_advice", "ai_strength_errors", "openai_key",
+        ):
             st.session_state.pop(key, None)
         with session_scope() as s:
             user = ps.ensure_user(
@@ -40,6 +44,7 @@ def ready() -> None:
                 email=identity[1] if identity else None,
             )
             ps.ensure_defaults(s, user)
+            get_profile(s, user)
             ps.sync_plan(s, user, ps.get_settings(s, user))
         st.session_state["_initialized_identity"] = identity_key
     if not database_url:

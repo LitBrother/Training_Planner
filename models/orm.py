@@ -1,7 +1,9 @@
 import datetime as dt
 from typing import Optional
 
-from sqlalchemy import Boolean, Date, DateTime, Float, ForeignKey, Index, Integer, String, Text, UniqueConstraint
+from sqlalchemy import (
+    Boolean, Date, DateTime, Float, ForeignKey, Index, Integer, String, Text, UniqueConstraint,
+)
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
 
 
@@ -17,6 +19,20 @@ class User(Base):
     auth_uid: Mapped[Optional[str]] = mapped_column(String(100), nullable=True)
     email: Mapped[Optional[str]] = mapped_column(String(320), nullable=True)
     created_at: Mapped[dt.datetime] = mapped_column(DateTime, default=dt.datetime.now)
+
+
+class AthleteProfile(Base):
+    __tablename__ = "athlete_profiles"
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    user_id: Mapped[int] = mapped_column(ForeignKey("users.id"), unique=True)
+    training_focus: Mapped[str] = mapped_column(String(20), default="Both")
+    experience_level: Mapped[str] = mapped_column(String(20), default="Beginner")
+    age: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
+    body_weight_kg: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
+    goal: Mapped[str] = mapped_column(Text, default="Build consistent fitness")
+    share_garmin_recovery_with_ai: Mapped[bool] = mapped_column(Boolean, default=False)
+    completed: Mapped[bool] = mapped_column(Boolean, default=False)
+    updated_at: Mapped[dt.datetime] = mapped_column(DateTime, default=dt.datetime.now, onupdate=dt.datetime.now)
 
 
 class Friendship(Base):

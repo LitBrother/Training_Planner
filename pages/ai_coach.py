@@ -33,8 +33,13 @@ with session_scope() as s:
                 if hosted:
                     from services.garmin_accounts import fetch_account_runs
                     st.session_state["garmin_runs"] = fetch_account_runs(s, user)
+                    from services.garmin_accounts import fetch_account_wellness
+                    st.session_state["garmin_wellness"] = fetch_account_wellness(s, user)
                 else:
-                    st.session_state["garmin_runs"] = fetch_runs_cached(*garmin_credentials())
+                    credentials = garmin_credentials()
+                    st.session_state["garmin_runs"] = fetch_runs_cached(*credentials)
+                    from services.garmin_sync import fetch_wellness
+                    st.session_state["garmin_wellness"] = fetch_wellness(*credentials)
                 st.rerun()
             except Exception as exc:
                 st.error(f"Garmin sync failed: {exc}")
@@ -43,14 +48,19 @@ with session_scope() as s:
     if st.button("Review my training", disabled=not key) and key:
         try:
             with st.spinner("Reviewing..."):
-                ctx = ai.build_context(s, user, today, runs)
-                summary, raw = ai.request_proposals(ctx, key, cfg.openai_model)
+                ctx = ai.build_context(s, user, today, runs, st.session_state.get("garmin_wellness"))
+                summary, raw, strength_raw = ai.request_proposals(ctx, key, cfg.openai_model)
                 up = ai.upcoming_sessions(s, user, today)
                 rule_raw = coaching.proposals_from_load(coaching.analyze(runs, today), up) if runs else []
                 ok, errs = ai.validate_proposals(rule_raw + raw, up)
+                strength_ok, strength_errors = ai.validate_strength_advice(
+                    strength_raw, ctx["strength_history"]
+                )
                 count = ai.save_proposals(s, user, ok, up)
             st.session_state["ai_summary"], st.session_state["ai_errors"] = summary, errs
             st.session_state["ai_applied_count"] = count
+            st.session_state["ai_strength_advice"] = strength_ok
+            st.session_state["ai_strength_errors"] = strength_errors
         except Exception as exc:
             st.error(f"AI request failed: {exc}")
     if st.session_state.get("ai_summary"):
@@ -58,6 +68,23 @@ with session_scope() as s:
         st.success(f"Automatically applied {st.session_state.get('ai_applied_count', 0)} safe change(s).")
     for e in st.session_state.get("ai_errors", []):
         st.caption(f"Rejected by safety rules: {e}")
+    for e in st.session_state.get("ai_strength_errors", []):
+        st.caption(f"Strength guidance withheld: {e}")
+
+    recommendations = st.session_state.get("ai_strength_advice", [])
+    if recommendations:
+        st.subheader("Strength guidance for your next sessions")
+        sources = {source["id"]: source for source in ai.evidence.SOURCES}
+        for item in recommendations:
+            st.markdown(
+                f"**{item['exercise']}** · {item['latest_weight_kg']:g} kg → "
+                f"**{item['next_weight_kg']:g} kg**, target {item['target_reps']} reps"
+            )
+            st.write(item["reason"])
+            st.caption("Only increase if you completed the target reps with good form and no pain.")
+            for source_id in item["evidence_ids"]:
+                source = sources[source_id]
+                st.markdown(f"[{source_id}]({source['url']})")
 
     st.subheader("Recent applied changes")
     applied = [a for a in ps.list_adjustments(s, user) if a.status == "applied"]

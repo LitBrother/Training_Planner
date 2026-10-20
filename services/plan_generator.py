@@ -5,8 +5,8 @@ from utils.dates import monday_of
 PHASE_GOALS = {
     "Base Development": "Consistency, durability, aerobic foundation, easy running habit.",
     "Aerobic Build": "Threshold development, aerobic capacity, longer long runs.",
-    "Marathon Build": "Marathon-specific preparation, fueling practice, long-run development.",
-    "Peak": "Race-specific fitness, pacing practice, final endurance development.",
+    "Goal-specific Build": "Goal-focused preparation, practice, and progressive endurance.",
+    "Peak": "Goal-specific fitness, pacing practice, final endurance development.",
     "Taper": "Maintain intensity, reduce volume, reduce fatigue.",
     "Race Week": "Minimal fatigue, short easy runs, no heavy leg training.",
 }
@@ -14,9 +14,9 @@ PHASE_GOALS = {
 TUESDAY = {
     "Base Development": [("Easy + Strides", "Easy run with strides"), ("Fartlek", "Short fartlek"), ("Easy", "Easy run")],
     "Aerobic Build": [("Threshold", "Threshold intervals"), ("Steady", "Tempo run"), ("Intervals", "Aerobic intervals")],
-    "Marathon Build": [("Threshold", "Threshold session"), ("Marathon Pace", "Marathon pace intervals")],
-    "Peak": [("Marathon Pace", "Marathon pace intervals"), ("Threshold", "Threshold session")],
-    "Taper": [("Threshold", "Threshold (reduced volume)"), ("Marathon Pace", "Marathon pace (reduced volume)")],
+    "Goal-specific Build": [("Threshold", "Threshold session"), ("Goal Pace", "Goal-pace intervals")],
+    "Peak": [("Goal Pace", "Goal-pace intervals"), ("Threshold", "Threshold session")],
+    "Taper": [("Threshold", "Threshold (reduced volume)"), ("Goal Pace", "Goal-pace (reduced volume)")],
 }
 
 
@@ -37,7 +37,7 @@ def _weekend_km(long_km: float) -> float:
 
 
 def split_build(build: int) -> tuple[int, int, int, int]:
-    """Return (base, aerobic, marathon_build, peak) week counts summing to build."""
+    """Return (base, aerobic, goal_build, peak) week counts summing to build."""
     if build <= 0:
         return 0, 0, 0, 0
     peak = max(1, round(build * 0.15))
@@ -55,12 +55,16 @@ def split_build(build: int) -> tuple[int, int, int, int]:
     return build - peak - mb - ab, ab, mb, peak
 
 
-def build_phase_list(n_weeks: int, taper: int) -> list[str]:
-    taper = max(0, min(taper, n_weeks - 1))
-    build = n_weeks - 1 - taper
+def build_phase_list(n_weeks: int, taper: int, include_race_week: bool = True) -> list[str]:
+    reserved = int(include_race_week)
+    taper = max(0, min(taper, n_weeks - reserved))
+    build = n_weeks - reserved - taper
     base, ab, mb, peak = split_build(build)
-    return (["Base Development"] * base + ["Aerobic Build"] * ab + ["Marathon Build"] * mb
-            + ["Peak"] * peak + ["Taper"] * taper + ["Race Week"])
+    phases = (["Base Development"] * base + ["Aerobic Build"] * ab + ["Goal-specific Build"] * mb
+              + ["Peak"] * peak + ["Taper"] * taper)
+    if include_race_week:
+        phases.append("Race Week")
+    return phases
 
 
 def long_run_curve(b: int, start: float, peak: float) -> list[tuple[float, bool]]:
@@ -90,28 +94,28 @@ def _build_runs(ws, phase, k, rec, long_km, q, w, wk_day) -> list[dict]:
         tt, tn = "Easy + Strides", "Easy run with strides"
     else:
         tt, tn = TUESDAY[phase][k % len(TUESDAY[phase])]
-    mp = (not rec) and (phase == "Peak" or (phase == "Marathon Build" and k % 2 == 1))
+    mp = (not rec) and (phase == "Peak" or (phase == "Goal-specific Build" and k % 2 == 1))
     wtype = "Recovery" if rec else "Easy"
     return [
         _run(ws, 1, "quality", tt, "", tn, q),
-        _run(ws, 4, "long", "Long Run", "MP finish" if mp else "Easy",
-             "Long run (MP finish + fueling)" if mp else "Long run (easy)", long_km),
+        _run(ws, 4, "long", "Long Run", "Goal Pace finish" if mp else "Easy",
+             "Long run (goal-pace finish + fueling)" if mp else "Long run (easy)", long_km),
         _run(ws, wk_day, "weekend", wtype, "", f"Weekend {wtype.lower()} run / hike / event", w),
     ]
 
 
-def _race_week_runs(ws: date, race_date: date) -> list[dict]:
+def _race_week_runs(ws: date, race_date: date, race_distance_km: float) -> list[dict]:
     runs = [
         _run(ws, 1, "quality", "Easy + Strides", "", "Race-week sharpener", 6),
         _run(ws, 4, "long", "Shakeout", "", "Pre-race shakeout", 4),
         _run(ws, 5, "weekend", "Shakeout", "", "Short shakeout", 3),
     ]
     runs = [r for r in runs if r["date"] < race_date]
-    runs.append(_run(ws, race_date.weekday(), "race", "Race", "", "Marathon race day", 42.2))
+    runs.append(_run(ws, race_date.weekday(), "race", "Race", "", "Goal event", race_distance_km))
     return runs
 
 
-def _strength(ws: date, phase: str, long_km: float, race_date: date) -> list[dict]:
+def _strength(ws: date, phase: str, long_km: float, race_date: date | None) -> list[dict]:
     if phase == "Race Week":
         level = "none"
     elif phase == "Taper":
@@ -123,16 +127,18 @@ def _strength(ws: date, phase: str, long_km: float, race_date: date) -> list[dic
     core = 10 if phase == "Race Week" else 12
     items = [(0, "Push", core, "normal"), (2, "Pull", 10, "normal"), (3, "Legs", 0, level)]
     return [{"date": ws + timedelta(days=d), "weekday": d, "kind": kind, "core_minutes": cm, "volume_level": lv}
-            for d, kind, cm, lv in items if ws + timedelta(days=d) < race_date]
+            for d, kind, cm, lv in items if race_date is None or ws + timedelta(days=d) < race_date]
 
 
 def generate_plan(plan_start: date, race_date: date, peak_long_km: float = 32.0, start_long_km: float = 14.0,
-                  taper_weeks: int = 3, weekend_day: str = "Saturday") -> list[dict]:
+                  taper_weeks: int = 3, weekend_day: str = "Saturday", *,
+                  include_race_week: bool = True, training_focus: str = "Both",
+                  race_distance_km: float = 42.2) -> list[dict]:
     first = monday_of(plan_start)
     n = (monday_of(race_date) - first).days // 7 + 1
     if n < 2:
         raise ValueError("Race date must be at least one week after the plan start.")
-    phases = build_phase_list(n, taper_weeks)
+    phases = build_phase_list(n, taper_weeks if include_race_week else 0, include_race_week)
     b = sum(1 for p in phases if p not in ("Taper", "Race Week"))
     curve = long_run_curve(b, start_long_km, peak_long_km)
     peak_l = curve[-1][0] if curve else peak_long_km
@@ -156,8 +162,12 @@ def generate_plan(plan_start: date, race_date: date, peak_long_km: float = 32.0,
             w = max(4.0, _r(_weekend_km(peak_l) * f))
         else:
             long_km = q = w = 0.0
-        runs = _race_week_runs(ws, race_date) if phase == "Race Week" else \
-            _build_runs(ws, phase, k, rec, long_km, q, w, wk_day)
+        runs = []
+        if training_focus != "Strength":
+            runs = (_race_week_runs(ws, race_date, race_distance_km) if phase == "Race Week" else
+                    _build_runs(ws, phase, k, rec, long_km, q, w, wk_day))
         weeks.append({"week_no": i + 1, "week_start": ws, "phase": phase, "is_recovery": rec,
-                      "runs": runs, "strength": _strength(ws, phase, long_km, race_date)})
+                      "runs": runs,
+                      "strength": _strength(ws, phase, long_km, race_date if include_race_week else None)
+                      if training_focus != "Running" else []})
     return weeks

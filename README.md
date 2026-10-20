@@ -1,8 +1,8 @@
-# Adam's Marathon Planner
+# Training Planner
 
-Personal marathon training platform built with Streamlit, SQLite/PostgreSQL, SQLAlchemy, Pydantic, Plotly and Gemini (optional).
-Default goal: marathon on 26 September 2027. Weekly order is fixed: Mon Push+Core, Tue Quality, Wed Pull,
-Thu Legs, Fri Long Run, Sat/Sun Easy/Event. Only volume and intensity ever change.
+Personalized running and strength training planner built with Streamlit, SQLite/PostgreSQL, SQLAlchemy, Pydantic,
+Plotly and Gemini (optional). Athletes choose running, strength training, or both; set an optional goal event or
+open-ended goal; and can track their training history and progress.
 
 > Not medical advice. See a qualified professional for pain, injury or health concerns.
 
@@ -15,19 +15,35 @@ streamlit run app.py
 pytest
 ```
 
+## Copilot agent team
+Workspace agents are in `.github/agents/`. In VS Code Chat, choose **Product Delivery Lead** for a
+bounded end-to-end feature workflow, or run `/market-quality-feature` and describe the feature. The
+workflow moves from Product Owner to Developer and independent Tester, with optional Product Designer,
+Security & Privacy Reviewer, and Release Manager checks when relevant. Each agent has a distinct role;
+the Tester is read-only and returns verified issues to the Developer for fixes.
+
+For a single task, select **Product Owner**, **Developer**, **Tester**, **Product Designer**,
+**Security & Privacy Reviewer**, or **Release Manager** directly from the agent picker. Agents support
+delivery work but do not run indefinitely or deploy/push changes without explicit authorization.
+
 ## Key rules implemented
-- Phases generated from race date: Base, Aerobic Build, Marathon Build, Peak (32 km default), Taper (3 weeks), Race Week.
+- Goal-event plans generate Base, Aerobic Build, Goal-specific Build, Peak, Taper, and Race Week phases.
+  Open-ended plans do not invent a race date or race week.
 - Recovery week every 4th build week; long-run increases capped at 3 km/week.
 - Completion >= 90%: no change; 75-89%: -5%; < 75%: -10% on upcoming runs. Missed sessions are never moved or made up,
   and the next long run after a missed one is capped at the missed distance.
-- Event weeks: Tuesday reduced, Friday shakeout (or reduced), weekend = event.
-- Legs: reduced volume if long run > 28 km, minimal in taper, none in race week.
+- Event weeks: reduced sessions before the selected event date and an event session on that date.
+- Running-only plans omit strength sessions; strength-only plans omit running sessions. Combined plans retain both.
 - Gemini can suggest safe increases or reductions. Changes apply automatically only after validation: no more than
   110% of planned distance per run or week, no long run above the configured peak, no event-session edits, and no
   increases during taper or race week. Each change is logged and can be reverted from the AI Coach page.
 - Accepted friends can view and directly edit each other's future training plan and goal race. Edits preserve the
   fixed schedule and the same distance/intensity limits.
 - Strength logs are included in Gemini's recent-history context alongside notes, completed weeks, and Garmin runs.
+  Strength suggestions are restricted to logged exercises and capped at a 10% load increase.
+- Fixed research references are available in the athlete profile and supplied to Gemini as evidence constraints.
+- Garmin recovery metrics are fetched for sleep, HRV, readiness, stress, body battery, and resting heart rate.
+  They are sent to Gemini only when the athlete explicitly opts in; they are not medical diagnostics.
 
 ## AI setup (optional)
 Set `GEMINI_API_KEY` as an environment variable or in Streamlit secrets, or paste it in Settings (session only).

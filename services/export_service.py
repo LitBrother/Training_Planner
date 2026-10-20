@@ -6,12 +6,13 @@ import pandas as pd
 from sqlalchemy import DateTime, Date, inspect, select
 
 from models.orm import (
-    AIAdjustment, Event, Note, RunningSession, Setting, StrengthLog, StrengthSession, TrainingWeek, User,
+    AIAdjustment, AthleteProfile, Event, Note, RunningSession, Setting, StrengthLog, StrengthSession,
+    TrainingWeek, User,
 )
 
 TABLES = {"users": User, "settings": Setting, "training_weeks": TrainingWeek, "running_sessions": RunningSession,
           "strength_sessions": StrengthSession, "strength_logs": StrengthLog, "events": Event, "notes": Note,
-          "ai_adjustments": AIAdjustment}
+          "ai_adjustments": AIAdjustment, "athlete_profiles": AthleteProfile}
 
 
 def _ser(v):
@@ -41,7 +42,7 @@ def dump_all(s, user=None) -> dict:
 
 
 def to_json(s, user=None) -> str:
-    return json.dumps({"app": "Adam's Marathon Planner", "version": 1, "exported_at": datetime.now().isoformat(),
+    return json.dumps({"app": "Training Planner", "version": 1, "exported_at": datetime.now().isoformat(),
                        "tables": dump_all(s, user)}, indent=2)
 
 
@@ -58,11 +59,19 @@ def _parse(col, v):
 def restore_json(s, text: str, user=None) -> dict[str, int]:
     data = json.loads(text)
     tables = data.get("tables") if isinstance(data, dict) else None
-    legacy_tables = set(TABLES) - {"strength_logs"}
-    if not isinstance(tables, dict) or set(tables) not in (legacy_tables, set(TABLES)):
+    legacy_tables = set(TABLES) - {"strength_logs", "athlete_profiles"}
+    accepted_tables = {
+        "current": set(TABLES),
+        "without_strength_logs": set(TABLES) - {"strength_logs"},
+        "without_profile": set(TABLES) - {"athlete_profiles"},
+        "oldest": legacy_tables,
+    }
+    if not isinstance(tables, dict) or not any(set(tables) == allowed for allowed in accepted_tables.values()):
         raise ValueError("Invalid backup file: tables do not match this application.")
     if "strength_logs" not in tables:
         tables["strength_logs"] = []
+    if "athlete_profiles" not in tables:
+        tables["athlete_profiles"] = []
     if user is not None:
         counts = {"users": 1}
         models = [model for name, model in TABLES.items() if name != "users"]
