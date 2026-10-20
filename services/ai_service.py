@@ -36,6 +36,7 @@ Never exceed 110% of original session or weekly planned km, or the configured pe
 Never increase mileage in taper or race week. Do not recommend increases for race/event sessions.
 Only reference sessions listed in 'upcoming'. Do not give medical advice; for pain or injury recommend a
 qualified professional. If no change is needed return an empty proposals list.
+If the athlete mentions pain, injury, or potential overtraining, be conservative: withhold any increases in volume or intensity, and advise consulting a medical professional. Treat ambiguous or missed injury signals as uncertain; never treat them as evidence of being injury-free.
 Use 'recent_runs' (real Garmin data: km, minutes, pace in min/km, avg HR), 'load', recent weekly completion,
 training notes when supplied, and strength_history to justify coaching. Compare actual weekly km to planned. Mention easy-run
 pace/HR drift, missed sessions, and strength progression where relevant. Use only evidence_ids supplied under
