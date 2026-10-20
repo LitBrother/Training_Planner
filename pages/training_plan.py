@@ -6,7 +6,7 @@ from database.session import session_scope
 from services import plan_service as ps
 from services.guidance import run_guidance, strength_guidance
 from services.plan_generator import PHASE_GOALS
-from utils.bootstrap import ready
+from utils.bootstrap import get_app_user, ready
 
 ready()
 st.title("🗓️ Weekly Planner")
@@ -14,7 +14,7 @@ st.caption("Workout order never changes automatically. Only volume and intensity
 rerun = False
 
 with session_scope() as s:
-    user = ps.ensure_user(s)
+    user = get_app_user(s)
     weeks = ps.list_weeks(s, user)
     idx = st.selectbox("Week", range(len(weeks)), index=ps.current_week_index(weeks, date.today()),
                        format_func=lambda i: f"Week {weeks[i].week_no} | {weeks[i].week_start:%d %b %Y} | {weeks[i].phase}"
@@ -74,7 +74,7 @@ with session_scope() as s:
                 done = c1.checkbox("Completed", x.completed)
                 notes = c2.text_input("Notes", x.notes or "", key=f"sn{x.id}")
                 if c3.form_submit_button("Save strength"):
-                    ps.log_strength(s, x.id, done, notes)
+                    ps.log_strength(s, user, x.id, done, notes)
                     rerun = True
         if not r and not x:
             st.caption("Rest day")

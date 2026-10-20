@@ -6,13 +6,13 @@ from database.session import session_scope
 from services import plan_service as ps
 from services.plan_generator import PHASE_GOALS
 from utils import charts
-from utils.bootstrap import ready
+from utils.bootstrap import get_app_user, ready
 
 ready()
 st.title("🏃 Adam's Marathon Planner")
 
 with session_scope() as s:
-    user = ps.ensure_user(s)
+    user = get_app_user(s)
     info = ps.dashboard_summary(s, user, date.today())
     df = ps.weekly_dataframe(s, user)
 

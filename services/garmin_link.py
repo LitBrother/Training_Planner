@@ -5,8 +5,10 @@ from services import plan_service as ps
 from services.garmin_match import match_long_runs, match_runs
 
 
-def link(s, session_id: int, run: dict) -> None:
+def link(s, user, session_id: int, run: dict) -> None:
     sess = s.get(RunningSession, session_id)
+    if sess is None or sess.user_id != user.id:
+        raise ValueError("Running session not found for this account.")
     if sess.manual_lock:
         raise ValueError("That session was set manually. Unlock it first.")
     sess.garmin_id = run["id"]
@@ -29,11 +31,11 @@ def auto_link(s, user, runs: list[dict]) -> int:
                      for x in sessions if not x.garmin_id and not x.manual_lock and x.adjusted_km]
     long_pairs = match_long_runs(free_runs, open_sessions)
     for rid, sid in long_pairs.items():
-        link(s, sid, by_id[rid])
+        link(s, user, sid, by_id[rid])
     free_runs = [r for r in free_runs if r["id"] not in long_pairs]
     open_sessions = [x for x in open_sessions if x["id"] not in long_pairs.values()]
     pairs = match_runs(free_runs, open_sessions)
     for rid, sid in pairs.items():
-        link(s, sid, by_id[rid])
+        link(s, user, sid, by_id[rid])
     ps.recalc(s, user)
     return len(pairs) + len(long_pairs)

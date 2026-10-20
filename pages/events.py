@@ -4,7 +4,7 @@ import streamlit as st
 
 from database.session import session_scope
 from services import plan_service as ps
-from utils.bootstrap import ready
+from utils.bootstrap import get_app_user, ready
 
 ready()
 st.title("🏁 Events")
@@ -24,11 +24,11 @@ with st.form("add_event"):
             st.error("Name and a distance above 0 are required.")
         else:
             with session_scope() as s:
-                ps.add_event(s, ps.ensure_user(s), name.strip(), etype, d, dist, prio, notes)
+                ps.add_event(s, get_app_user(s), name.strip(), etype, d, dist, prio, notes)
             rerun = True
 
 with session_scope() as s:
-    user = ps.ensure_user(s)
+    user = get_app_user(s)
     for e in ps.list_events(s, user):
         c = st.columns([2, 2, 1, 1, 3, 1])
         c[0].write(f"**{e.name}**")

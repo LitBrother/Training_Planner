@@ -2,6 +2,7 @@ streamlit>=1.36
 pandas>=2.0
 plotly>=5.20
 SQLAlchemy>=2.0
+psycopg[binary]>=3.2
 pydantic>=2.5
 openai>=1.30
 openpyxl>=3.1

@@ -14,8 +14,23 @@ EVENT_TYPES = {"5km": 5.0, "10km": 10.0, "Half marathon": 21.1, "Marathon": 42.2
 
 
 # ---------------------------------------------------------------- users / settings
-def ensure_user(s, name: str = "Adam Williams") -> User:
-    u = s.scalars(select(User)).first()
+def ensure_user(
+    s, name: str = "Adam Williams", auth_uid: str | None = None, email: str | None = None
+) -> User:
+    if auth_uid:
+        u = s.scalars(select(User).where(User.auth_uid == auth_uid)).first()
+        if u is None:
+            # The first account claims the pre-auth single-user profile when one exists.
+            u = s.scalars(select(User).where(User.auth_uid.is_(None)).order_by(User.id)).first()
+            if u is None:
+                profile_name = email.partition("@")[0].replace(".", " ").title() if email else name
+                u = User(name=profile_name)
+                s.add(u)
+            u.auth_uid = auth_uid
+            u.email = email
+            s.flush()
+        return u
+    u = s.scalars(select(User).where(User.auth_uid.is_(None)).order_by(User.id)).first()
     if u is None:
         u = User(name=name)
         s.add(u)
@@ -295,6 +310,8 @@ def monthly_dataframe(s, user) -> pd.DataFrame:
 def log_run(s, user, run_id: int, status: str, actual_km: float | None, notes: str = "",
             today: date | None = None, overwrite: bool = False) -> None:
     r = s.get(RunningSession, run_id)
+    if r is None or r.user_id != user.id:
+        raise ValueError("Running session not found for this account.")
     if r.garmin_id and r.source == "garmin" and not overwrite:
         raise ValueError("This run is linked to Garmin. Tick 'Overwrite manually' to change it.")
     r.status = status
@@ -314,13 +331,18 @@ def log_run(s, user, run_id: int, status: str, actual_km: float | None, notes: s
 
 def unlock_run(s, user, run_id: int, today: date | None = None) -> None:
     """Hand the session back to Garmin; the next sync refreshes it."""
-    s.get(RunningSession, run_id).manual_lock = False
+    run = s.get(RunningSession, run_id)
+    if run is None or run.user_id != user.id:
+        raise ValueError("Running session not found for this account.")
+    run.manual_lock = False
     s.flush()
     recalc(s, user, today)
 
 
-def log_strength(s, sid: int, completed: bool, notes: str = "") -> None:
+def log_strength(s, user, sid: int, completed: bool, notes: str = "") -> None:
     x = s.get(StrengthSession, sid)
+    if x is None or x.user_id != user.id:
+        raise ValueError("Strength session not found for this account.")
     x.completed, x.notes = completed, notes
     s.flush()
 
@@ -339,6 +361,8 @@ def delete_event(s, user, event_id: int, today: date | None = None) -> None:
     ev = s.get(Event, event_id)
     if not ev:
         return
+    if ev.user_id != user.id:
+        raise ValueError("Event not found for this account.")
     cfg = get_settings(s, user)
     if cfg.race_date == ev.date:
         save_settings(s, user, cfg.model_copy(update={"race_date": None}))
@@ -359,8 +383,10 @@ def add_note(s, user, d: date, category: str, text: str) -> None:
     s.flush()
 
 
-def delete_note(s, note_id: int) -> None:
+def delete_note(s, note_id: int, user=None) -> None:
     n = s.get(Note, note_id)
+    if n is not None and user is not None and n.user_id != user.id:
+        raise ValueError("Note not found for this account.")
     if n:
         s.delete(n)
 
@@ -370,10 +396,13 @@ def _week_days(d: date) -> list[date]:
     return [m + timedelta(days=i) for i in range(7)]
 
 
-def set_strength_status(s, sid: int, status: str) -> None:
+def set_strength_status(s, user, sid: int, status: str) -> None:
     if status not in ("planned", "completed", "missed"):
         raise ValueError("Invalid status")
-    s.get(StrengthSession, sid).status = status
+    session = s.get(StrengthSession, sid)
+    if session is None or session.user_id != user.id:
+        raise ValueError("Strength session not found for this account.")
+    session.status = status
     s.flush()
 
 

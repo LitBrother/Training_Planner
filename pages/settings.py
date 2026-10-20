@@ -8,16 +8,17 @@ from models.schemas import PlanSettings
 from services import export_service as ex
 from services import plan_service as ps
 from services.garmin_sync import fetch_runs, garmin_credentials
+from services.auth import runtime_config
 from services import coaching
 from services.ai_service import upcoming_sessions
-from utils.bootstrap import ready
+from utils.bootstrap import get_app_user, ready
 
 ready()
 st.title("⚙️ Settings")
 rerun = False
 
 with session_scope() as s:
-    user = ps.ensure_user(s)
+    user = get_app_user(s)
     cfg = ps.get_settings(s, user)
     with st.form("settings"):
         name = st.text_input("Name", cfg.user_name)
@@ -48,22 +49,25 @@ with session_scope() as s:
 
     st.subheader("Data")
     c = st.columns(3)
-    c[0].download_button("Excel export", ex.to_excel(s), "marathon_planner.xlsx")
+    c[0].download_button("Excel export", ex.to_excel(s, user), "marathon_planner.xlsx")
     table = c[1].selectbox("CSV table", list(ex.TABLES))
-    c[2].download_button("CSV export", ex.table_csv(s, table), f"{table}.csv", "text/csv")
-    st.download_button("JSON backup", ex.to_json(s), "marathon_backup.json", "application/json")
+    c[2].download_button("CSV export", ex.table_csv(s, table, user), f"{table}.csv", "text/csv")
+    st.download_button("JSON backup", ex.to_json(s, user), "marathon_backup.json", "application/json")
     up = st.file_uploader("JSON restore", type="json")
-    if up and st.checkbox("I understand this replaces all current data") and st.button("Restore backup"):
+    if up and st.checkbox("I understand this replaces my account's training data") and st.button("Restore backup"):
         try:
-            counts = ex.restore_json(s, up.getvalue().decode("utf-8"))
-            ps.recalc(s, ps.ensure_user(s))
+            counts = ex.restore_json(s, up.getvalue().decode("utf-8"), user)
+            ps.recalc(s, user)
             st.success(f"Restored: {counts}")
         except Exception as exc:
             st.error(f"Restore failed: {exc}")
-st.caption("Streamlit Community Cloud storage is ephemeral. Download a JSON backup regularly.")
+st.caption("Your hosted database persists across app restarts. Keep a JSON backup as an extra safeguard.")
 
 st.subheader("Garmin sync")
-if st.button("Sync last 30 days from Garmin"):
+hosted = runtime_config()[0] is not None
+if hosted:
+    st.info("Garmin connections are not yet isolated per account. Connect Garmin after per-user integration is added.")
+elif st.button("Sync last 30 days from Garmin"):
     try:
         with st.spinner("Contacting Garmin..."):
             runs = fetch_runs(*garmin_credentials())
@@ -84,6 +88,6 @@ if "garmin_runs" in st.session_state:
         st.success("Training load looks sensible. Stay with the plan.")
 
     with session_scope() as s2:
-        up = upcoming_sessions(s2, ps.ensure_user(s2), date.today())
+        up = upcoming_sessions(s2, get_app_user(s2), date.today())
     for d, sess in sorted(up.items())[:7]:
         st.markdown(f"**{d:%a %d %b}, {sess.get('type', 'run')}:** {coaching.run_note(sess.get('type', ''), info)}")

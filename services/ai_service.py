@@ -140,7 +140,11 @@ def save_proposals(s, user, proposals: list[AIProposal], upcoming: dict[date, di
 
 
 def set_status(s, user, adj_id: int, status: str, today: date | None = None) -> None:
+    if status not in {"approved", "rejected"}:
+        raise ValueError("Invalid adjustment status.")
     a = s.get(AIAdjustment, adj_id)
+    if a is None or a.user_id != user.id:
+        raise ValueError("AI adjustment not found for this account.")
     a.status = status
     s.flush()
     ps.recalc(s, user, today)

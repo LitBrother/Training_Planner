@@ -1,11 +1,17 @@
 from datetime import date
+import json
+
+import pytest
+from sqlalchemy import create_engine, inspect, text
 
 from database.session import session_scope
+from database.session import configure
 from services import ai_service as ai
 from services import export_service as ex
 from services import plan_service as ps
 from services.adjustments import adjust_km, completion_pct, reduction_factor
 from services.plan_generator import generate_plan
+from models.orm import StrengthLog
 from tests.conftest import START
 
 
@@ -102,12 +108,45 @@ def test_backup_restore(db):
         for e in ps.list_events(s, u):
             ps.delete_event(s, u, e.id, today=START)
     with session_scope() as s:
-        counts = ex.restore_json(s, backup)
+        legacy_backup = json.loads(backup)
+        legacy_backup["tables"].pop("strength_logs")
+        counts = ex.restore_json(s, json.dumps(legacy_backup))
         u = ps.ensure_user(s)
         assert counts["notes"] == 1
+        assert counts["strength_logs"] == 0
         assert len(ps.list_notes(s, u)) == 1
         assert any(e.name == "10k" for e in ps.list_events(s, u))
         assert len(ps.all_runs(s, u)) == n_runs
+
+
+def test_authenticated_accounts_are_isolated(db):
+    with session_scope() as s:
+        owner = ps.ensure_user(s, auth_uid="auth-owner", email="owner@example.com")
+        other = ps.ensure_user(s, auth_uid="auth-other", email="other@example.com")
+        ps.add_note(s, owner, START, "Training", "Owner-only note")
+        ps.add_note(s, other, START, "Training", "Other-account note")
+        s.add(StrengthLog(user_id=owner.id, date=START, exercise="Squat", weight_kg=60, sets=3, reps=8))
+        s.add(StrengthLog(user_id=other.id, date=START, exercise="Squat", weight_kg=100, sets=3, reps=5))
+        run = ps.all_runs(s, owner)[0]
+        with pytest.raises(ValueError, match="not found for this account"):
+            ps.log_run(s, other, run.id, "missed", None)
+
+        backup = ex.to_json(s, owner)
+        payload = json.loads(backup)
+        assert [n["text"] for n in payload["tables"]["notes"]] == ["Owner-only note"]
+        assert [row["weight_kg"] for row in payload["tables"]["strength_logs"]] == [60]
+        assert "auth_uid" not in payload["tables"]["users"][0]
+        assert "email" not in payload["tables"]["users"][0]
+        ps.add_note(s, owner, START, "General", "Remove when restoring")
+        counts = ex.restore_json(s, backup, owner)
+        assert counts["notes"] == 1
+
+        assert [n.text for n in ps.list_notes(s, owner)] == ["Owner-only note"]
+        assert [n.text for n in ps.list_notes(s, other)] == ["Other-account note"]
+        owner_lifts = list(s.query(StrengthLog).filter_by(user_id=owner.id))
+        other_lifts = list(s.query(StrengthLog).filter_by(user_id=other.id))
+        assert [lift.weight_kg for lift in owner_lifts] == [60]
+        assert [lift.weight_kg for lift in other_lifts] == [100]
 
 
 def test_mileage_adjustment_calculations():
@@ -116,3 +155,24 @@ def test_mileage_adjustment_calculations():
     assert reduction_factor(74.9) == 0.9 and reduction_factor(0) == 0.9
     assert adjust_km(20, 0.95) == 19.0 and adjust_km(26, 0.9) == 23.4
     assert completion_pct(25, 20) == 80.0 and completion_pct(0, 5) == 0.0 and completion_pct(10, 12) == 100.0
+
+
+def test_schema_migration_adds_auth_columns(tmp_path):
+    path = tmp_path / "legacy.db"
+    database_url = f"sqlite:///{path.as_posix()}"
+    engine = create_engine(database_url)
+    with engine.begin() as conn:
+        conn.execute(text(
+            "CREATE TABLE users (id INTEGER PRIMARY KEY, name VARCHAR(100) NOT NULL, "
+            "created_at DATETIME NOT NULL)"
+        ))
+    engine.dispose()
+
+    configure(database_url)
+    with session_scope() as s:
+        columns = {column["name"] for column in inspect(s.get_bind()).get_columns("users")}
+        indexes = {index["name"] for index in inspect(s.get_bind()).get_indexes("users")}
+        bind = s.get_bind()
+    assert {"auth_uid", "email"} <= columns
+    assert "uq_users_auth_uid" in indexes
+    bind.dispose()

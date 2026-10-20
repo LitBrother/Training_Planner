@@ -5,6 +5,8 @@ import streamlit as st
 import truststore
 from garminconnect import Garmin
 
+from services.auth import runtime_config
+
 truststore.inject_into_ssl()
 
 TOKEN_DIR = Path(__file__).resolve().parent.parent / ".garmin_tokens"
@@ -35,6 +37,8 @@ def fetch_runs(email: str, password: str, days: int = 30) -> list[dict]:
 
 
 def garmin_credentials() -> tuple[str, str]:
+    if runtime_config()[0] is not None:
+        raise RuntimeError("Shared Garmin credentials are disabled in hosted multi-account mode.")
     email = str(st.secrets.get("GARMIN_EMAIL", ""))
     password = str(st.secrets.get("GARMIN_PASSWORD", ""))
     if not email or not password:

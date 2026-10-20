@@ -4,12 +4,12 @@ import pandas as pd
 from database.session import session_scope
 from services import plan_service as ps
 from utils import charts
-from utils.bootstrap import ready
+from utils.bootstrap import get_app_user, ready
 
 ready()
 st.title("📈 Progress")
 with session_scope() as s:
-    user = ps.ensure_user(s)
+    user = get_app_user(s)
     start = ps.get_settings(s, user).plan_start
     df = ps.weekly_dataframe(s, user)
     mdf = ps.monthly_dataframe(s, user)

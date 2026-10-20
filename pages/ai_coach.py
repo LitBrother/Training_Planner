@@ -6,8 +6,9 @@ from database.session import session_scope
 from services import ai_service as ai
 from services import plan_service as ps
 from services import coaching
+from services.auth import runtime_config
 from services.garmin_sync import fetch_runs_cached, garmin_credentials
-from utils.bootstrap import get_openai_key, ready
+from utils.bootstrap import get_app_user, get_openai_key, ready
 
 ready()
 st.title("🤖 AI Coach")
@@ -16,16 +17,18 @@ st.caption("Optional. The AI may only reduce volume, simplify quality sessions o
            "This is not medical advice; see a professional for pain or injury.")
 key = get_openai_key()
 if not key:
-    st.warning("No OpenAI API key configured (Settings, secrets or OPENAI_API_KEY). The rest of the app works without it.")
     st.warning("No Gemini API key configured (Settings or .streamlit/secrets.toml). The rest of the app works without it.")
 rerun = False
 today = date.today()
 
 with session_scope() as s:
-    user = ps.ensure_user(s)
+    user = get_app_user(s)
     cfg = ps.get_settings(s, user)
     runs = st.session_state.get("garmin_runs")
-    if runs is None and st.button("Load Garmin data first"):
+    hosted = runtime_config()[0] is not None
+    if hosted:
+        st.caption("Hosted Garmin sync will be available after per-account Garmin linking is implemented.")
+    if runs is None and not hosted and st.button("Load Garmin data first"):
         with st.spinner("Contacting Garmin..."):
             st.session_state["garmin_runs"] = fetch_runs_cached(*garmin_credentials())
         st.rerun()

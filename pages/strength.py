@@ -9,14 +9,14 @@ from models.orm import StrengthSession
 from services import coaching
 from services import plan_service as ps
 from services import strength_progress as sp
-from utils.bootstrap import ready
+from utils.bootstrap import get_app_user, ready
 
 ready()
 st.title("🏋️ Strength")
 
 st.subheader("Lift progression")
 with session_scope() as s:
-    user = ps.ensure_user(s)
+    user = get_app_user(s)
     with st.form("lift"):
         c = st.columns([3, 2, 1, 1, 2])
         ex = c[0].text_input("Exercise", placeholder="Bench Press")
