@@ -51,17 +51,26 @@ def test_ai_proposal_caps_and_taper_rules():
     assert not over_week and any("weekly distance" in error for error in errors)
 
 
-def test_ai_changes_apply_and_can_be_reverted(db):
+def test_ai_changes_require_preview_and_confirmation_and_can_be_reverted(db):
     with session_scope() as s:
         user = ps.ensure_user(s)
         run = next(item for item in ps.all_runs(s, user)
                    if item.date >= date.today() and item.slot not in {"race", "long"})
         upcoming = ai.upcoming_sessions(s, user, date.today())
         target = round(run.planned_km * 1.05, 1)
-        proposal = ai.AIProposal(
-            session_date=run.date, kind="increase_volume", new_km=target, reason="Gradual, capped increase"
-        )
-        assert ai.save_proposals(s, user, [proposal], upcoming) == 1
+        raw = [{
+            "session_date": run.date.isoformat(), "kind": "increase_volume",
+            "new_km": target, "reason": "Gradual, capped increase",
+        }]
+        proposals, errors, snapshot = ai.create_preview(raw, upcoming, user.id)
+        assert len(proposals) == 1 and not errors
+        assert run.adjusted_km != target
+        assert ps.list_adjustments(s, user) == []
+
+        selected = [proposals[0].model_dump(mode="json")]
+        assert ai.apply_reviewed_proposals(
+            s, user, [p.model_dump(mode="json") for p in proposals], selected, snapshot, date.today()
+        ) == 1
         applied = ps.list_adjustments(s, user)[0]
         assert applied.status == "applied"
         assert run.adjusted_km == target
@@ -188,15 +197,16 @@ def test_custom_race_distance_and_safe_strength_advice_validation():
     assert not accepted and len(errors) == 1
 
 
-def test_garmin_wellness_context_requires_profile_consent(db):
-    recovery = {"sleep_hours": 7.5, "hrv": 42}
+def test_garmin_wellness_context_requires_fresh_per_review_consent(db):
+    recovery = {"metrics": {"hrv": [{"date": "2026-10-20", "lastNightAvg": 42}]}}
     with session_scope() as s:
         user = ps.ensure_user(s)
         profile = get_profile(s, user)
-        profile.share_garmin_recovery_with_ai = False
-        assert "garmin_wellness" not in ai.build_context(s, user, START, garmin_wellness=recovery)
         profile.share_garmin_recovery_with_ai = True
-        assert ai.build_context(s, user, START, garmin_wellness=recovery)["garmin_wellness"] == recovery
+        assert "garmin_wellness" not in ai.build_context(s, user, START, garmin_wellness=recovery)
+        assert ai.build_context(
+            s, user, START, garmin_wellness=recovery, include_garmin_recovery=True
+        )["garmin_wellness"] == recovery
 
 
 def test_garmin_credentials_are_encrypted_and_account_scoped(db, monkeypatch):

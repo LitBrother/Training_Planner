@@ -24,6 +24,7 @@ with session_scope() as s:
     user = get_app_user(s)
     cfg = ps.get_settings(s, user)
     with st.form("settings"):
+        st.subheader("Plan")
         name = st.text_input("Name", cfg.user_name)
         focus = st.selectbox("Training focus", ["Running", "Strength", "Both"],
                              index=["Running", "Strength", "Both"].index(cfg.training_focus))
@@ -38,6 +39,7 @@ with session_scope() as s:
         start_long = st.number_input("Starting long run (km)", 5.0, 30.0, cfg.start_long_km, 0.5)
         taper = st.number_input("Taper length (weeks)", 1, 4, cfg.taper_weeks)
         wk = st.selectbox("Weekend run day", ["Saturday", "Sunday"], index=["Saturday", "Sunday"].index(cfg.weekend_day))
+        st.subheader("AI")
         models = ["gemini-3.5-flash-lite", "gemini-flash-latest", "gemini-2.5-flash"]
         current = cfg.openai_model if cfg.openai_model in models else models[0]
         model = st.selectbox("Gemini model", models, index=models.index(current))
@@ -59,13 +61,22 @@ with session_scope() as s:
     st.text_input("Gemini API key (kept in this browser session only)", type="password", key="openai_key")
 
     st.subheader("Data")
-    c = st.columns(3)
+    table = st.selectbox("CSV table", list(ex.TABLES))
+    st.markdown(ex.manifest_text("csv", user, table))
+    st.markdown(ex.manifest_text("excel", user))
+    st.markdown(ex.manifest_text("json", user))
+    c = st.columns(2)
     c[0].download_button("Excel export", ex.to_excel(s, user), "training_planner.xlsx")
-    table = c[1].selectbox("CSV table", list(ex.TABLES))
-    c[2].download_button("CSV export", ex.table_csv(s, table, user), f"{table}.csv", "text/csv")
-    st.download_button("JSON backup", ex.to_json(s, user), "training_planner_backup.json", "application/json")
+    c[1].download_button(
+        "CSV export", ex.table_csv(s, table, user), f"{table}.csv", "text/csv"
+    )
+    st.download_button(
+        "JSON backup", ex.to_json(s, user), "training_planner_backup.json", "application/json"
+    )
     up = st.file_uploader("JSON restore", type="json")
-    if up and st.checkbox("I understand this replaces my account's training data") and st.button("Restore backup"):
+    if up and st.checkbox(
+        "I understand this replaces only my current account's exported data; saved Garmin credentials remain preserved"
+    ) and st.button("Restore backup"):
         try:
             counts = ex.restore_json(s, up.getvalue().decode("utf-8"), user)
             ps.recalc(s, user)
@@ -74,7 +85,7 @@ with session_scope() as s:
             st.error(f"Restore failed: {exc}")
 st.caption("Your hosted database persists across app restarts. Keep a JSON backup as an extra safeguard.")
 
-st.subheader("Garmin sync")
+st.subheader("Garmin")
 hosted = runtime_config()[0] is not None
 if hosted:
     st.caption("Credentials are encrypted in the database using GARMIN_ENCRYPTION_KEY from Streamlit Secrets.")

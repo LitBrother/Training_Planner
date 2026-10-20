@@ -57,4 +57,4 @@ class AIProposal(BaseModel):
     ]
     new_km: float = Field(ge=0)
     new_type: Optional[str] = None
-    reason: str = ""
+    reason: str = Field(default="", max_length=500)

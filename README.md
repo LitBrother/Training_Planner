@@ -34,16 +34,22 @@ delivery work but do not run indefinitely or deploy/push changes without explici
   and the next long run after a missed one is capped at the missed distance.
 - Event weeks: reduced sessions before the selected event date and an event session on that date.
 - Running-only plans omit strength sessions; strength-only plans omit running sessions. Combined plans retain both.
-- Gemini can suggest safe increases or reductions. Changes apply automatically only after validation: no more than
-  110% of planned distance per run or week, no long run above the configured peak, no event-session edits, and no
-  increases during taper or race week. Each change is logged and can be reverted from the AI Coach page.
+- Gemini can suggest safe increases or reductions. Plan changes are previewed and require explicit confirmation;
+  only the exact selected proposals are applied after revalidation: no more than 110% of planned distance per run or
+  week, no long run above the configured peak, no event-session edits, and no increases during taper or race week.
+  Each change is logged and can be reverted from the AI Coach page.
 - Accepted friends can view and directly edit each other's future training plan and goal race. Edits preserve the
   fixed schedule and the same distance/intensity limits.
-- Strength logs are included in Gemini's recent-history context alongside notes, completed weeks, and Garmin runs.
-  Strength suggestions are restricted to logged exercises and capped at a 10% load increase.
+- Strength logs are included in Gemini's recent-history context alongside completed weeks and Garmin runs.
+  Recent notes are excluded by default; a separate affirmative opt-in on each AI review sends recent note date,
+  category, and text to Google Gemini for that review. Strength suggestions are restricted to logged exercises and
+  capped at a 10% load increase. Detailed strength logs retain each set's metric load and reps; their estimated
+  1RM uses Epley from the highest-weight set, breaking ties by using the set with the most reps. Legacy aggregate
+  logs remain aggregate and are never expanded into fabricated set history.
 - Fixed research references are available in the athlete profile and supplied to Gemini as evidence constraints.
 - Garmin recovery metrics are fetched for sleep, HRV, readiness, stress, body battery, and resting heart rate.
-  They are sent to Gemini only when the athlete explicitly opts in; they are not medical diagnostics.
+  They are sent to Gemini only after an unchecked, affirmative choice for that specific review; saved preferences do
+  not grant consent. They are not medical diagnostics. Age and body weight are excluded from AI reviews.
 
 ## AI setup (optional)
 Set `GEMINI_API_KEY` as an environment variable or in Streamlit secrets, or paste it in Settings (session only).

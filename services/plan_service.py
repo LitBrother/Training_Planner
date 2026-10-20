@@ -1,10 +1,13 @@
-from datetime import date, timedelta
+import math
+from datetime import date, datetime, time, timedelta, timezone
+from numbers import Real
 
 import pandas as pd
 from sqlalchemy import func, select
 
 from models.orm import (
-    AIAdjustment, Event, Friendship, Note, RunningSession, Setting, StrengthSession, TrainingWeek, User,
+    AIAdjustment, Event, Friendship, Note, RunCorrectionHistory, RunningSession, Setting,
+    StrengthLog, StrengthSession, TrainingWeek, User,
 )
 from models.schemas import PlanSettings
 from services.adjustments import INTENSITY, adjust_km, apply_event_week, completion_pct, rank, reduction_factor
@@ -14,6 +17,14 @@ from utils.dates import monday_of
 GOAL_NAME = "Goal Event"
 LEGACY_GOAL_NAMES = {GOAL_NAME, "Goal Marathon"}
 EVENT_TYPES = {"5km": 5.0, "10km": 10.0, "Half marathon": 21.1, "Marathon": 42.2, "Trail race": 0.0, "Custom": 0.0}
+NOTE_CATEGORIES = ("Training", "Injury", "Travel", "Fatigue", "Sleep", "General")
+
+
+class _UnsetRunContext:
+    pass
+
+
+_UNSET_RUN_CONTEXT = _UnsetRunContext()
 
 
 # ---------------------------------------------------------------- users / settings
@@ -43,6 +54,34 @@ def ensure_user(
 
 def _setting_rows(s, user) -> dict:
     return {r.key: r.value for r in s.scalars(select(Setting).where(Setting.user_id == user.id))}
+
+
+def training_is_paused(s, user) -> bool:
+    """Return this account's persisted training-pause state."""
+    rows = s.scalars(select(Setting).where(
+        Setting.user_id == user.id, Setting.key == "training_paused"
+    )).all()
+    return any(row.value == "true" for row in rows)
+
+
+def set_training_paused(s, user, paused: bool) -> None:
+    """Persist pause state without changing the plan or any logged sessions."""
+    if not isinstance(paused, bool):
+        raise ValueError("Training pause state must be true or false.")
+    rows = s.scalars(select(Setting).where(
+        Setting.user_id == user.id, Setting.key == "training_paused"
+    )).all()
+    if paused:
+        if rows:
+            rows[0].value = "true"
+            for duplicate in rows[1:]:
+                s.delete(duplicate)
+        else:
+            s.add(Setting(user_id=user.id, key="training_paused", value="true"))
+    else:
+        for row in rows:
+            s.delete(row)
+    s.flush()
 
 
 def get_settings(s, user) -> PlanSettings:
@@ -234,13 +273,55 @@ def list_weeks(s, user):
         TrainingWeek.user_id == user.id, TrainingWeek.week_start >= start).order_by(TrainingWeek.week_start)))
 
 
-def week_runs(s, week_id):
-    return list(s.scalars(select(RunningSession).where(RunningSession.week_id == week_id).order_by(RunningSession.date)))
+def week_runs(s, week_id, user=None):
+    query = select(RunningSession).where(RunningSession.week_id == week_id)
+    if user is not None:
+        query = query.where(RunningSession.user_id == user.id)
+    return list(s.scalars(query.order_by(RunningSession.date)))
 
 
-def week_strength(s, week_id):
-    return list(s.scalars(select(StrengthSession).where(StrengthSession.week_id == week_id)
-                          .order_by(StrengthSession.date)))
+def week_strength(s, week_id, user=None):
+    query = select(StrengthSession).where(StrengthSession.week_id == week_id)
+    if user is not None:
+        query = query.where(StrengthSession.user_id == user.id)
+    return list(s.scalars(query.order_by(StrengthSession.date)))
+
+
+def weekly_activity_summary(s, user, week) -> dict:
+    """Return persisted activity for one of the signed-in user's training weeks."""
+    owned_week = s.scalars(select(TrainingWeek).where(
+        TrainingWeek.id == week.id, TrainingWeek.user_id == user.id
+    )).first()
+    if owned_week is None:
+        raise ValueError("Training week not found for this account.")
+
+    runs = list(s.scalars(select(RunningSession).where(
+        RunningSession.user_id == user.id, RunningSession.week_id == owned_week.id
+    )))
+    recorded_runs = [run for run in runs if run.status in ("completed", "missed")]
+    strengths = list(s.scalars(select(StrengthSession).where(
+        StrengthSession.user_id == user.id, StrengthSession.week_id == owned_week.id
+    )))
+    lift_log_count = s.scalar(select(func.count(StrengthLog.id)).where(
+        StrengthLog.user_id == user.id,
+        StrengthLog.date >= owned_week.week_start,
+        StrengthLog.date <= owned_week.week_start + timedelta(days=6),
+    )) or 0
+
+    return {
+        "has_running_records": bool(runs),
+        "planned_running_km": round(sum(run.planned_km for run in runs), 1) if runs else None,
+        "adjusted_running_km": round(sum(run.adjusted_km for run in runs), 1) if runs else None,
+        "actual_running_km": round(sum(run.actual_km or 0 for run in recorded_runs), 1)
+        if recorded_runs else None,
+        "running_completion_pct": week_completion(runs) if recorded_runs else None,
+        "completed_runs": sum(run.status == "completed" for run in runs),
+        "missed_runs": sum(run.status == "missed" for run in runs),
+        "planned_runs": sum(run.status == "planned" for run in runs),
+        "planned_strength_sessions": len(strengths),
+        "completed_strength_sessions": sum(session.completed for session in strengths),
+        "lift_log_entries": lift_log_count,
+    }
 
 
 def all_runs(s, user):
@@ -255,11 +336,86 @@ def list_notes(s, user):
     return list(s.scalars(select(Note).where(Note.user_id == user.id).order_by(Note.date.desc(), Note.id.desc())))
 
 
-def list_adjustments(s, user, status: str | None = None):
+def list_adjustments(
+    s,
+    user,
+    status: str | None = None,
+    start_date: date | None = None,
+    end_date: date | None = None,
+):
     q = select(AIAdjustment).where(AIAdjustment.user_id == user.id)
     if status:
         q = q.where(AIAdjustment.status == status)
-    return list(s.scalars(q.order_by(AIAdjustment.created_at.desc())))
+    if start_date:
+        q = q.where(AIAdjustment.created_at >= datetime.combine(start_date, time.min))
+    if end_date:
+        q = q.where(AIAdjustment.created_at < datetime.combine(end_date + timedelta(days=1), time.min))
+    return list(s.scalars(q.order_by(AIAdjustment.created_at.desc(), AIAdjustment.id.desc())))
+
+
+def run_correction_history(s, user, run_id: int) -> list[RunCorrectionHistory]:
+    """Return corrections only when the requested run belongs to this account."""
+    run = s.scalars(select(RunningSession).where(
+        RunningSession.id == run_id, RunningSession.user_id == user.id
+    )).first()
+    if run is None:
+        raise ValueError("Running session not found for this account.")
+    return list(s.scalars(select(RunCorrectionHistory).where(
+        RunCorrectionHistory.user_id == user.id,
+        RunCorrectionHistory.running_session_id == run.id,
+    ).order_by(RunCorrectionHistory.corrected_at, RunCorrectionHistory.id)))
+
+
+def correct_run_distance(s, user, run_id: int, field_name: str, new_value: float) -> bool:
+    """Correct a manually logged completed run, recording an atomic UTC audit entry.
+
+    Returns False for an unchanged value. All changes are contained in a savepoint
+    so a failed audit insert or recalculation leaves the run and derived totals intact.
+    """
+    if field_name != "actual_km":
+        raise ValueError("Only actual_km can be corrected.")
+    if not isinstance(new_value, Real) or isinstance(new_value, bool):
+        raise ValueError("Actual distance must be a positive finite number up to 100 km.")
+    try:
+        new_distance = float(new_value)
+    except OverflowError:
+        raise ValueError("Actual distance must be a positive finite number up to 100 km.") from None
+    if not math.isfinite(new_distance) or not 0 < new_distance <= 100:
+        raise ValueError("Actual distance must be a positive finite number up to 100 km.")
+
+    run = s.scalars(select(RunningSession).where(
+        RunningSession.id == run_id, RunningSession.user_id == user.id
+    )).first()
+    if run is None:
+        raise ValueError("Running session not found for this account.")
+    if (
+        run.status != "completed" or run.source not in (None, "manual")
+        or run.garmin_id is not None
+    ):
+        raise ValueError("Only completed, manually logged runs can be corrected.")
+    old_distance = run.actual_km
+    if (
+        not isinstance(old_distance, Real) or isinstance(old_distance, bool)
+        or not math.isfinite(float(old_distance)) or not 0 < float(old_distance) <= 100
+    ):
+        raise ValueError("The saved actual distance is outside supported correction bounds.")
+    old_distance = float(old_distance)
+    if new_distance == old_distance:
+        return False
+
+    with s.begin_nested():
+        run.actual_km = new_distance
+        s.add(RunCorrectionHistory(
+            user_id=user.id,
+            running_session_id=run.id,
+            field_name="actual_km",
+            corrected_at=datetime.now(timezone.utc),
+            old_value=old_distance,
+            new_value=new_distance,
+        ))
+        s.flush()
+        recalc(s, user)
+    return True
 
 
 def _friendship(s, user_id: int, friend_id: int):
@@ -438,12 +594,40 @@ def monthly_dataframe(s, user) -> pd.DataFrame:
 
 # ---------------------------------------------------------------- mutations
 def log_run(s, user, run_id: int, status: str, actual_km: float | None, notes: str = "",
-            today: date | None = None, overwrite: bool = False) -> None:
+            today: date | None = None, overwrite: bool = False,
+            manual_duration_min: float | None | _UnsetRunContext = _UNSET_RUN_CONTEXT,
+            perceived_effort_rpe: int | None | _UnsetRunContext = _UNSET_RUN_CONTEXT) -> None:
     r = s.get(RunningSession, run_id)
     if r is None or r.user_id != user.id:
         raise ValueError("Running session not found for this account.")
     if r.garmin_id and r.source == "garmin" and not overwrite:
         raise ValueError("This run is linked to Garmin. Tick 'Overwrite manually' to change it.")
+    if (
+        r.status == "completed" and status == "completed"
+        and r.source in (None, "manual") and r.garmin_id is None
+    ):
+        requested_actual = actual_km if actual_km is not None else r.adjusted_km
+        if requested_actual != r.actual_km:
+            raise ValueError("Use the run correction flow to change a completed run's actual distance.")
+    if manual_duration_min is not _UNSET_RUN_CONTEXT and manual_duration_min is not None:
+        if not isinstance(manual_duration_min, Real) or isinstance(manual_duration_min, bool):
+            raise ValueError("Manual duration must be a positive finite number of minutes.")
+        try:
+            manual_duration_min = float(manual_duration_min)
+        except OverflowError:
+            raise ValueError("Manual duration must be a positive finite number of minutes.") from None
+        if not math.isfinite(manual_duration_min) or manual_duration_min <= 0:
+            raise ValueError("Manual duration must be a positive finite number of minutes.")
+    if perceived_effort_rpe is not _UNSET_RUN_CONTEXT and perceived_effort_rpe is not None:
+        if not isinstance(perceived_effort_rpe, Real) or isinstance(perceived_effort_rpe, bool):
+            raise ValueError("Self-reported RPE must be a whole number from 1 to 10.")
+        try:
+            rpe_value = float(perceived_effort_rpe)
+        except OverflowError:
+            raise ValueError("Self-reported RPE must be a whole number from 1 to 10.") from None
+        if not math.isfinite(rpe_value) or not rpe_value.is_integer() or not 1 <= rpe_value <= 10:
+            raise ValueError("Self-reported RPE must be a whole number from 1 to 10.")
+        perceived_effort_rpe = int(rpe_value)
     r.status = status
     r.notes = notes
     if status == "completed":
@@ -452,6 +636,10 @@ def log_run(s, user, run_id: int, status: str, actual_km: float | None, notes: s
         r.actual_km = 0.0
     else:
         r.actual_km = None
+    if manual_duration_min is not _UNSET_RUN_CONTEXT:
+        r.manual_duration_min = manual_duration_min
+    if perceived_effort_rpe is not _UNSET_RUN_CONTEXT:
+        r.perceived_effort_rpe = perceived_effort_rpe
     r.source = "manual"
     if r.garmin_id and overwrite:
         r.manual_lock = True
@@ -519,6 +707,20 @@ def delete_note(s, note_id: int, user=None) -> None:
         raise ValueError("Note not found for this account.")
     if n:
         s.delete(n)
+
+
+def update_note(s, user, note_id: int, d: date, category: str, text: str) -> None:
+    note = s.get(Note, note_id)
+    if note is None or note.user_id != user.id:
+        raise ValueError("Note not found for this account.")
+    if category not in NOTE_CATEGORIES:
+        raise ValueError("Invalid note category.")
+    if not isinstance(text, str) or not text.strip():
+        raise ValueError("Note text cannot be blank.")
+    note.date = d
+    note.category = category
+    note.text = text.strip()
+    s.flush()
 
 
 def _week_days(d: date) -> list[date]:

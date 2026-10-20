@@ -21,14 +21,14 @@ with session_scope() as s:
         level = st.selectbox("Training experience", ["Beginner", "Intermediate", "Advanced"],
                              index=["Beginner", "Intermediate", "Advanced"].index(profile.experience_level))
         goal = st.text_input("Current goal", profile.goal, max_chars=300)
-        share_age = st.checkbox("Include age in coaching context", value=profile.age is not None)
+        share_age = st.checkbox("Save age in my profile", value=profile.age is not None)
         age = st.number_input("Age", min_value=18, max_value=100, value=profile.age or 30, disabled=not share_age)
-        share_weight = st.checkbox("Include body weight in coaching context",
+        share_weight = st.checkbox("Save body weight in my profile",
                                    value=profile.body_weight_kg is not None)
         weight = st.number_input("Body weight (kg)", min_value=35.0, max_value=250.0,
                                  value=profile.body_weight_kg or 70.0, step=0.5, disabled=not share_weight)
         share_recovery = st.checkbox(
-            "Allow synced Garmin sleep and recovery metrics to be sent to Gemini when I request coaching",
+            "Remember my Garmin recovery-sharing preference (AI still asks for consent at each review)",
             value=profile.share_garmin_recovery_with_ai,
         )
         if st.form_submit_button("Save profile"):
@@ -48,7 +48,9 @@ with session_scope() as s:
                 st.error(f"Profile not saved: {exc}")
 
 st.caption("We do not estimate a biological/fitness age or infer potential from age or body weight. "
-           "Strength progression uses your logged sets, reps and weights; body weight is not used to prescribe loads.")
+           "Age and body weight are saved only in your profile and are not sent to Gemini. Strength progression "
+           "uses your logged sets, reps and weights; body weight is not used to prescribe loads. Garmin recovery "
+           "metrics are omitted unless you opt in separately on each AI review.")
 with st.expander("Training evidence used for consistent guidance"):
     st.write("The coach uses this fixed set of published sources and cites source IDs in its advice.")
     for source in SOURCES:

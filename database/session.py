@@ -43,6 +43,8 @@ def configure(url: str | None = None) -> None:
     adds = [("users", "auth_uid", "VARCHAR"), ("users", "email", "VARCHAR"),
             ("running_sessions", "garmin_id", "VARCHAR"), ("running_sessions", "source", "VARCHAR"),
             ("running_sessions", "manual_lock", "BOOLEAN DEFAULT 0"),
+            ("running_sessions", "manual_duration_min", "FLOAT"),
+            ("running_sessions", "perceived_effort_rpe", "INTEGER"),
             ("strength_sessions", "status", "VARCHAR DEFAULT 'planned'"),
             ("ai_adjustments", "created_by_user_id", "INTEGER")]
     with engine.begin() as conn:

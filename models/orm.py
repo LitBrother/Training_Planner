@@ -88,6 +88,28 @@ class RunningSession(Base):
     garmin_id: Mapped[str | None] = mapped_column(String, nullable=True)
     source: Mapped[str | None] = mapped_column(String, nullable=True)  # "manual" | "garmin"
     manual_lock: Mapped[bool] = mapped_column(Boolean, default=False)
+    manual_duration_min: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
+    perceived_effort_rpe: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
+
+
+class RunCorrectionHistory(Base):
+    """Append-only application record of owner corrections to actual run distance.
+
+    corrected_at is stored in UTC. This records history, but is not tamper-evident
+    against direct database access.
+    """
+
+    __tablename__ = "run_correction_history"
+    __table_args__ = (
+        Index("ix_run_correction_history_owner_run_time", "user_id", "running_session_id", "corrected_at"),
+    )
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    user_id: Mapped[int] = mapped_column(ForeignKey("users.id"))
+    running_session_id: Mapped[int] = mapped_column(ForeignKey("running_sessions.id"))
+    field_name: Mapped[str] = mapped_column(String(40))
+    corrected_at: Mapped[dt.datetime] = mapped_column(DateTime(timezone=True))
+    old_value: Mapped[float] = mapped_column(Float)
+    new_value: Mapped[float] = mapped_column(Float)
 
 
 class StrengthSession(Base):
@@ -119,6 +141,20 @@ class StrengthLog(Base):
     weight_kg: Mapped[float] = mapped_column(Float)
     sets: Mapped[int] = mapped_column(Integer)
     reps: Mapped[int] = mapped_column(Integer)  # reps per set (lowest set)
+
+
+class StrengthSetDetail(Base):
+    __tablename__ = "strength_set_details"
+    __table_args__ = (
+        UniqueConstraint("strength_log_id", "set_number", name="uq_strength_set_detail_number"),
+        Index("ix_strength_set_details_owner_parent", "user_id", "strength_log_id"),
+    )
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    user_id: Mapped[int] = mapped_column(ForeignKey("users.id"))
+    strength_log_id: Mapped[int] = mapped_column(ForeignKey("strength_logs.id"))
+    set_number: Mapped[int] = mapped_column(Integer)
+    weight_kg: Mapped[float] = mapped_column(Float)
+    reps: Mapped[int] = mapped_column(Integer)
 
 
 class Event(Base):

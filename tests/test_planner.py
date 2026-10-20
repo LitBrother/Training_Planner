@@ -99,7 +99,7 @@ def test_backup_restore(db):
         u = ps.ensure_user(s)
         ps.add_note(s, u, date(2026, 10, 13), "Sleep", "Slept badly")
         ps.add_event(s, u, "10k", "10km", date(2026, 12, 6), 10.0, "C", today=START)
-        backup = ex.to_json(s)
+        backup = ex.to_json(s, u)
         n_runs = len(ps.all_runs(s, u))
     with session_scope() as s:
         u = ps.ensure_user(s)
@@ -108,10 +108,10 @@ def test_backup_restore(db):
         for e in ps.list_events(s, u):
             ps.delete_event(s, u, e.id, today=START)
     with session_scope() as s:
+        u = ps.ensure_user(s)
         legacy_backup = json.loads(backup)
         legacy_backup["tables"].pop("strength_logs")
-        counts = ex.restore_json(s, json.dumps(legacy_backup))
-        u = ps.ensure_user(s)
+        counts = ex.restore_json(s, json.dumps(legacy_backup), u)
         assert counts["notes"] == 1
         assert counts["strength_logs"] == 0
         assert len(ps.list_notes(s, u)) == 1

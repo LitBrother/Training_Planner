@@ -36,6 +36,8 @@ def ready() -> None:
         for key in (
             "garmin_runs", "garmin_wellness", "garmin_msg", "ai_summary", "ai_errors",
             "ai_strength_advice", "ai_strength_errors", "openai_key",
+            "ai_notes_opt_in", "_ai_notes_request_opt_in", "_ai_notes_request_identity",
+            "_ai_notes_consent_identity",
         ):
             st.session_state.pop(key, None)
         with session_scope() as s:
