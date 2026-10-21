@@ -11,6 +11,15 @@ def link(s, user, session_id: int, run: dict) -> None:
         raise ValueError("Running session not found for this account.")
     if sess.manual_lock:
         raise ValueError("That session was set manually. Unlock it first.")
+    
+    # Idempotent re-link: if already linked to this run, do nothing.
+    if sess.garmin_id == run["id"]:
+        return
+        
+    # Prevent linking to an already-linked session (that wasn't this run)
+    if sess.garmin_id is not None:
+         raise ValueError("That session is already linked to a different Garmin run.")
+
     sess.garmin_id = run["id"]
     sess.actual_km = run["distance_km"]
     sess.status = "completed"

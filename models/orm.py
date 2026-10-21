@@ -70,6 +70,20 @@ class TrainingWeek(Base):
 
 class RunningSession(Base):
     __tablename__ = "running_sessions"
+    # (user_id, garmin_id) uniqueness is enforced at the application layer in
+    # garmin_link.link(); the partial index below enforces it at the DB layer
+    # for non-NULL garmin_id values.
+    __table_args__ = (
+        Index(
+            "uq_running_sessions_user_garmin_id",
+            "user_id", "garmin_id",
+            unique=True,
+            # SQLite supports partial indexes; PostgreSQL does too.
+            # The SQLAlchemy dialect renders sqlite_where / postgresql_where.
+            sqlite_where=__import__("sqlalchemy").text("garmin_id IS NOT NULL"),
+            postgresql_where=__import__("sqlalchemy").text("garmin_id IS NOT NULL"),
+        ),
+    )
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
     user_id: Mapped[int] = mapped_column(ForeignKey("users.id"))
     week_id: Mapped[Optional[int]] = mapped_column(ForeignKey("training_weeks.id"), nullable=True)
