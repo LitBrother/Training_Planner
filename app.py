@@ -84,4 +84,8 @@ pages = [
     st.Page("pages/settings.py", title="Settings", icon="⚙️"),
 ]
 st.navigation(pages).run()
+st.sidebar.divider()
+if st.sidebar.button("Sign out"):
+    st.session_state.clear()
+    st.rerun()
 st.sidebar.caption("Not medical advice. Consult a qualified professional about injuries or health concerns.")
