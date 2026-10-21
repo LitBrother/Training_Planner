@@ -47,8 +47,8 @@ def credentials(s, user) -> tuple[str, str] | None:
             cipher.decrypt(email_row.value.encode()).decode(),
             cipher.decrypt(password_row.value.encode()).decode(),
         )
-    except (InvalidToken, UnicodeDecodeError) as exc:
-        raise RuntimeError("Saved Garmin credentials could not be decrypted. Check the encryption key.") from exc
+    except (InvalidToken, UnicodeDecodeError):
+        raise RuntimeError("Saved Garmin credentials could not be decrypted. Check the encryption key.")
 
 
 def save_credentials(s, user, email: str, password: str) -> None:
@@ -72,18 +72,23 @@ def remove_credentials(s, user) -> None:
     for row in _rows(s, user).values():
         s.delete(row)
     s.flush()
-    # Clean up token directory files for this user account
+    # Clean up token directory files for this user account with path containment check (Finding 3)
     token_dir = TOKEN_ROOT / str(user.id)
-    if token_dir.exists() and token_dir.is_dir():
-        for file in token_dir.glob("*"):
+    try:
+        resolved_root = TOKEN_ROOT.resolve()
+        resolved_dir = token_dir.resolve()
+        if resolved_dir.is_relative_to(resolved_root) and resolved_dir.exists() and resolved_dir.is_dir():
+            for file in resolved_dir.glob("*"):
+                try:
+                    file.unlink()
+                except Exception:
+                    pass
             try:
-                file.unlink()
+                resolved_dir.rmdir()
             except Exception:
                 pass
-        try:
-            token_dir.rmdir()
-        except Exception:
-            pass
+    except Exception:
+        pass
 
 
 def disconnect_account(s, user, retain_imported_data: bool = True) -> dict:

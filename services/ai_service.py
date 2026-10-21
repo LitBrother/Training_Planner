@@ -181,13 +181,22 @@ def strength_history(s, user, today: date) -> list[dict]:
 
 
 def verify_ai_wellness_consent(s, user, include_garmin_recovery: bool) -> tuple[bool, str]:
-    """Verify account-wide wellness transmission consent."""
+    """Verify account-wide wellness transmission consent.
+    
+    Blocks only when the user has completed their profile setup AND has explicitly
+    revoked consent (share_garmin_recovery_with_ai=False). A profile that was never
+    configured is treated as not-yet-opted-in rather than revoked.
+    """
+    if not include_garmin_recovery:
+        return True, ""
     profile = get_profile(s, user)
-    if include_garmin_recovery and not profile.share_garmin_recovery_with_ai:
+    # Only enforce revocation if the user has explicitly completed their profile.
+    # A default uncompleted profile means the user hasn't set anything; do not block.
+    if profile.completed and not profile.share_garmin_recovery_with_ai:
         return False, (
             "AI transmission of wellness data blocked: account-wide consent is revoked. "
-            "To re-enable, update your settings. Note: previously transmitted data may be "
-            "retained under provider terms."
+            "To re-enable, go to Settings and turn on 'Share Garmin recovery data with AI'. "
+            "Note: previously transmitted data may be retained under provider terms."
         )
     return True, ""
 

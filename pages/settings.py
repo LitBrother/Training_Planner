@@ -65,6 +65,7 @@ with session_scope() as s:
                 profile.share_garmin_recovery_with_ai = share_wellness
                 if not share_wellness:
                     st.session_state.pop("garmin_wellness", None)
+                    st.session_state.pop("_ai_plan_preview", None) # Fix Finding 4
                 st.success("Saved. Logged sessions were preserved.")
                 st.session_state.pop("_synced", None)
             except (ValidationError, ValueError) as exc:
@@ -119,16 +120,28 @@ if hosted:
             st.rerun()
         except (ValueError, RuntimeError) as exc:
             st.error(f"Could not save Garmin connection: {exc}")
-    if credentials and st.button("Remove saved Garmin connection"):
-        retain_data = st.checkbox("Retain previously imported runs/wellness data", value=True)
-        if st.button("Confirm disconnect"):
-            with session_scope() as gs:
-                res = garmin_accounts.disconnect_account(gs, get_app_user(gs), retain_imported_data=retain_data)
-            st.session_state.pop("garmin_runs", None)
-            st.session_state.pop("garmin_wellness", None)
-            st.success("Garmin connection removed.")
-            st.info(res["revocation_notice"])
-            st.rerun()
+    # TP-30: Robust disconnect state handling
+    if credentials:
+        if "confirm_disconnect" not in st.session_state:
+            if st.button("Remove saved Garmin connection"):
+                st.session_state["confirm_disconnect"] = True
+                st.rerun()
+        else:
+            retain_data = st.checkbox("Retain previously imported runs/wellness data", value=True)
+            col1, col2 = st.columns(2)
+            if col1.button("Confirm disconnect"):
+                with session_scope() as gs:
+                    res = garmin_accounts.disconnect_account(gs, get_app_user(gs), retain_imported_data=retain_data)
+                st.session_state.pop("garmin_runs", None)
+                st.session_state.pop("garmin_wellness", None)
+                st.session_state.pop("_ai_plan_preview", None) # Fix Finding 4
+                st.session_state.pop("confirm_disconnect", None)
+                st.success("Garmin connection removed.")
+                st.info(res["revocation_notice"])
+                st.rerun()
+            if col2.button("Cancel"):
+                st.session_state.pop("confirm_disconnect", None)
+                st.rerun()
     if credentials and st.button("Sync my Garmin runs"):
         try:
             with st.spinner("Contacting Garmin..."):
