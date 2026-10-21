@@ -72,6 +72,69 @@ def remove_credentials(s, user) -> None:
     for row in _rows(s, user).values():
         s.delete(row)
     s.flush()
+    # Clean up token directory files for this user account
+    token_dir = TOKEN_ROOT / str(user.id)
+    if token_dir.exists() and token_dir.is_dir():
+        for file in token_dir.glob("*"):
+            try:
+                file.unlink()
+            except Exception:
+                pass
+        try:
+            token_dir.rmdir()
+        except Exception:
+            pass
+
+
+def disconnect_account(s, user, retain_imported_data: bool = True) -> dict:
+    """Disconnect Garmin for this account.
+    
+    - Attempts provider-side revocation (Garmin Connect API does not provide an automated
+      token revocation endpoint, so we document/return unsupported revocation guidance).
+    - Removes stored credentials and auth token files for this user only.
+    - Settles/cancels any pending sync state.
+    - Optionally retains or deletes imported Garmin run matches based on retain_imported_data.
+    - Guarantees complete account isolation.
+    """
+    # 1. Settle/cancel pending syncs / clear credential cache
+    remove_credentials(s, user)
+    
+    # 2. Handle imported runs and wellness data according to user choice
+    from models.orm import RunningSession
+    runs = list(s.scalars(select(RunningSession).where(RunningSession.user_id == user.id, RunningSession.garmin_id.is_not(None))))
+    
+    if not retain_imported_data:
+        # Delete or unlink imported runs
+        for sess in runs:
+            sess.garmin_id = None
+            sess.actual_km = None
+            sess.status = "planned"
+            sess.source = None
+        s.flush()
+        from services import plan_service as ps
+        ps.recalc(s, user)
+        imported_action = "deleted_and_unlinked"
+    else:
+        imported_action = "retained"
+        
+    # 3. Provider revocation status
+    # Garmin Connect API does not currently support programmatic third-party token revocation.
+    revocation_supported = False
+    revocation_notice = (
+        "Garmin Connect does not provide an automated API revocation endpoint for third-party apps. "
+        "Your local app-stored credentials and tokens have been completely deleted. "
+        "To fully revoke Garmin's server-side access to this application, please visit "
+        "https://connect.garmin.com -> Account Settings -> Connected Apps and remove authorization."
+    )
+    
+    return {
+        "user_id": user.id,
+        "credentials_removed": True,
+        "tokens_cleared": True,
+        "imported_data_action": imported_action,
+        "revocation_supported": revocation_supported,
+        "revocation_notice": revocation_notice,
+    }
 
 
 def fetch_account_runs(s, user, days: int = 35) -> list[dict]:

@@ -109,11 +109,15 @@ if hosted:
         except (ValueError, RuntimeError) as exc:
             st.error(f"Could not save Garmin connection: {exc}")
     if credentials and st.button("Remove saved Garmin connection"):
-        with session_scope() as gs:
-            garmin_accounts.remove_credentials(gs, get_app_user(gs))
-        st.session_state.pop("garmin_runs", None)
-        st.success("Garmin connection removed.")
-        st.rerun()
+        retain_data = st.checkbox("Retain previously imported runs/wellness data", value=True)
+        if st.button("Confirm disconnect"):
+            with session_scope() as gs:
+                res = garmin_accounts.disconnect_account(gs, get_app_user(gs), retain_imported_data=retain_data)
+            st.session_state.pop("garmin_runs", None)
+            st.session_state.pop("garmin_wellness", None)
+            st.success("Garmin connection removed.")
+            st.info(res["revocation_notice"])
+            st.rerun()
     if credentials and st.button("Sync my Garmin runs"):
         try:
             with st.spinner("Contacting Garmin..."):
