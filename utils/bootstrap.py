@@ -1,4 +1,5 @@
 import os
+from datetime import datetime
 
 import streamlit as st
 from streamlit.errors import StreamlitSecretNotFoundError
@@ -34,7 +35,8 @@ def ready() -> None:
     identity_key = identity[0] if identity else "local"
     if st.session_state.get("_initialized_identity") != identity_key:
         for key in (
-            "garmin_runs", "garmin_wellness", "garmin_msg", "ai_summary", "ai_errors",
+            "garmin_runs", "garmin_wellness", "garmin_msg", "garmin_sync_last_success",
+            "garmin_sync_run_count", "garmin_sync_error", "ai_summary", "ai_errors",
             "ai_strength_advice", "ai_strength_errors", "openai_key",
             "ai_notes_opt_in", "_ai_notes_request_opt_in", "_ai_notes_request_identity",
             "_ai_notes_consent_identity",
@@ -78,6 +80,15 @@ def get_openai_key() -> str | None:
     return key or os.getenv("GEMINI_API_KEY")
 
 
+from garminconnect import (
+    GarminConnectAuthenticationError,
+    GarminConnectConnectionError,
+    GarminConnectNotFoundError,
+    GarminConnectTooManyRequestsError,
+)
+
+# ... (rest of imports)
+
 def auto_garmin_sync() -> None:
     """Once per browser session: pull Garmin runs, link them to sessions, fill actual km."""
     if st.session_state.get("_garmin_tried"):
@@ -92,6 +103,17 @@ def auto_garmin_sync() -> None:
         with session_scope() as s:
             n = auto_link(s, ps.ensure_user(s), runs)
         st.session_state["garmin_runs"] = runs
+        st.session_state["garmin_sync_last_success"] = datetime.now()
+        st.session_state["garmin_sync_run_count"] = len(runs)
+        st.session_state.pop("garmin_sync_error", None)
         st.session_state["garmin_msg"] = f"Garmin synced: {len(runs)} runs, {n} newly matched."
-    except Exception as exc:
-        st.session_state["garmin_msg"] = f"Garmin auto-sync failed: {exc}"
+    except (GarminConnectAuthenticationError, GarminConnectTooManyRequestsError,
+            GarminConnectConnectionError, GarminConnectNotFoundError):
+        msg = "Sync failed. Check your connection and Garmin credentials."
+        st.session_state["garmin_sync_error"] = msg
+        st.session_state["garmin_msg"] = msg
+    except Exception:
+        # log the real exception server-side, show nothing sensitive to the user
+        msg = "Sync failed. Check your connection and Garmin credentials."
+        st.session_state["garmin_sync_error"] = msg
+        st.session_state["garmin_msg"] = msg

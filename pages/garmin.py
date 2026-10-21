@@ -1,4 +1,4 @@
-from datetime import date, timedelta
+from datetime import date, timedelta, datetime
 
 import streamlit as st
 from sqlalchemy import select
@@ -13,9 +13,30 @@ from services.auth import runtime_config
 from services.garmin_link import auto_link, link
 from services.garmin_sync import fetch_runs_cached
 from utils.bootstrap import get_app_user, ready
+from garminconnect import (
+    GarminConnectAuthenticationError,
+    GarminConnectConnectionError,
+    GarminConnectNotFoundError,
+    GarminConnectTooManyRequestsError,
+)
 
 ready()
 st.title("⌚ Garmin")
+
+def render_sync_status():
+    if "garmin_sync_error" in st.session_state:
+        st.error(f"Sync failed: {st.session_state['garmin_sync_error']}. Try again or check your Garmin connection in Settings.")
+    elif "garmin_sync_last_success" in st.session_state:
+        last_sync = st.session_state["garmin_sync_last_success"]
+        n = st.session_state["garmin_sync_run_count"]
+        if datetime.now() - last_sync < timedelta(hours=24):
+            st.success(f"Synced at {last_sync.strftime('%H:%M')} — {n} runs fetched.")
+        else:
+            st.warning(f"Last synced {int((datetime.now() - last_sync).days)} days ago — data may be out of date.")
+    else:
+        st.info("No sync yet — press the button above to fetch your Garmin runs.")
+
+render_sync_status()
 
 is_hosted = runtime_config()[0] is not None
 
@@ -28,18 +49,43 @@ if is_hosted:
             st.stop()
     if st.button("Sync my Garmin runs"):
         with st.spinner("Contacting Garmin..."):
-            with session_scope() as s:
-                user = get_app_user(s)
-                st.session_state["garmin_runs"] = garmin_accounts.fetch_account_runs(s, user)
-                n = auto_link(s, user, st.session_state["garmin_runs"])
-        st.success(f"Matched {n} runs to sessions.")
+            try:
+                with session_scope() as s:
+                    user = get_app_user(s)
+                    runs = garmin_accounts.fetch_account_runs(s, user)
+                    n = auto_link(s, user, runs)
+                st.session_state["garmin_runs"] = runs
+                st.session_state["garmin_sync_last_success"] = datetime.now()
+                st.session_state["garmin_sync_run_count"] = len(runs)
+                st.session_state.pop("garmin_sync_error", None)
+                st.rerun()
+            except (GarminConnectAuthenticationError, GarminConnectTooManyRequestsError,
+                    GarminConnectConnectionError, GarminConnectNotFoundError):
+                st.session_state["garmin_sync_error"] = "Could not reach Garmin Connect."
+                st.rerun()
+            except Exception:
+                st.session_state["garmin_sync_error"] = "An unexpected error occurred."
+                st.rerun()
 else:
     if st.button("Sync and auto-match"):
         with st.spinner("Contacting Garmin..."):
-            st.session_state["garmin_runs"] = fetch_runs_cached(st.secrets["GARMIN_EMAIL"], st.secrets["GARMIN_PASSWORD"])
-        with session_scope() as s:
-            n = auto_link(s, get_app_user(s), st.session_state["garmin_runs"])
-        st.success(f"Matched {n} runs to sessions.")
+            try:
+                runs = fetch_runs_cached(st.secrets["GARMIN_EMAIL"], st.secrets["GARMIN_PASSWORD"])
+                with session_scope() as s:
+                    n = auto_link(s, get_app_user(s), runs)
+                st.session_state["garmin_runs"] = runs
+                st.session_state["garmin_sync_last_success"] = datetime.now()
+                st.session_state["garmin_sync_run_count"] = len(runs)
+                st.session_state.pop("garmin_sync_error", None)
+                st.rerun()
+            except (GarminConnectAuthenticationError, GarminConnectTooManyRequestsError,
+                    GarminConnectConnectionError, GarminConnectNotFoundError):
+                st.session_state["garmin_sync_error"] = "Could not reach Garmin Connect."
+                st.rerun()
+            except Exception:
+                st.session_state["garmin_sync_error"] = "An unexpected error occurred."
+                st.rerun()
+
 
 runs = st.session_state.get("garmin_runs", [])
 with session_scope() as s:
