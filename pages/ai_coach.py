@@ -168,12 +168,14 @@ with session_scope() as s:
             st.session_state["ai_strength_advice"] = strength_ok
             st.session_state["ai_strength_errors"] = strength_errors
             if ok:
+                # Preview only - store the proposals for confirmation, no adjustments yet
                 st.session_state["_ai_plan_preview"] = {
                     "preview_id": uuid4().hex,
                     "account_identity": consent_identity,
                     "user_id": user.id,
                     "proposals": [proposal.model_dump(mode="json") for proposal in ok],
                     "snapshot": snapshot,
+                    "upcoming_sessions": up,
                 }
             else:
                 st.info("No safe plan changes were proposed. Your plan was not changed.")
@@ -228,16 +230,19 @@ with session_scope() as s:
                 st.warning("Select at least one reviewed proposal to confirm.")
             else:
                 try:
-                    count = ai.apply_reviewed_proposals(
-                        s, user, preview["proposals"], selected, preview["snapshot"], today
-                    )
+                    # Staging: Save proposals as pending AIAdjustments before any mutation
+                    upcoming = preview.get("upcoming_sessions", ai.upcoming_sessions(s, user, today))
+                    adjustment_ids = ai.save_pending_proposals(s, user, preview["proposals"], upcoming)
+                    
+                    # Apply the pending adjustments - this is a separate explicit transaction
+                    count = ai.apply_pending_proposals(s, user, adjustment_ids, today)
                     st.session_state["ai_confirmed_count"] = count
                     st.session_state.pop("_ai_plan_preview", None)
                     st.success(f"Applied {count} confirmed change(s).")
                     rerun = True
-                except ValueError:
+                except ValueError as e:
                     st.session_state.pop("_ai_plan_preview", None)
-                    st.error("The preview could not be applied safely. Review your current plan again.")
+                    st.error(f"Failed to apply changes: {e}")
                     rerun = True
         if cancel_col.button("Cancel preview", key="ai_cancel_plan_preview"):
             st.session_state.pop("_ai_plan_preview", None)

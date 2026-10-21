@@ -210,7 +210,7 @@ def request_proposals(context: dict, api_key: str, model: str,
         },
     }
     resp = None
-    for attempt in range(3):
+    for attempt in range(5):
         try:
             resp = requests.post(
                 GEMINI_URL.format(model=model),
@@ -219,16 +219,16 @@ def request_proposals(context: dict, api_key: str, model: str,
                 timeout=(10, 90),
             )
         except requests.exceptions.Timeout:
-            if attempt == 2:
+            if attempt == 4:
                 raise AIRequestError(
                     "Gemini timed out. Try again shortly or pick another model in Settings."
                 ) from None
-            time.sleep(2 * (attempt + 1))
+            time.sleep(2 ** attempt)
             continue
         except requests.exceptions.RequestException:
             raise AIRequestError("Gemini request failed. Please try again.") from None
-        if resp.status_code in (429, 500, 503) and attempt < 2:
-            time.sleep(2 * (attempt + 1))
+        if resp.status_code in (429, 500, 503) and attempt < 4:
+            time.sleep(2 ** attempt)
             continue
         break
     assert resp is not None
@@ -504,14 +504,65 @@ def apply_reviewed_proposals(
     return len(selected_models)
 
 
+def save_pending_proposals(s, user, proposals: list[dict], upcoming: dict[date, dict]) -> list[int]:
+    """Saves proposals as pending AIAdjustments without applying changes to sessions/weeks."""
+    safe_models, _ = validate_proposals(proposals, upcoming)
+    
+    adjustment_ids = []
+    for p in safe_models:
+        info = upcoming[p.session_date]
+        adj = AIAdjustment(
+            user_id=user.id, session_date=p.session_date, kind=p.kind,
+            old_km=info["adjusted_km"], new_km=p.new_km,
+            old_type=info["type"], new_type=p.new_type or info["type"],
+            reason=p.reason, status="pending",
+        )
+        s.add(adj)
+        s.flush()
+        adjustment_ids.append(adj.id)
+    return adjustment_ids
+
+
+def apply_pending_proposals(s, user, adjustment_ids: list[int], today: date | None = None) -> int:
+    """Applies a list of pending AIAdjustments to the running plan."""
+    adjustments = s.scalars(
+        select(AIAdjustment).where(
+            AIAdjustment.id.in_(adjustment_ids),
+            AIAdjustment.user_id == user.id,
+            AIAdjustment.status == "pending"
+        )
+    ).all()
+    
+    if len(adjustments) != len(adjustment_ids):
+        raise ValueError("Some adjustments were not found or already applied.")
+    
+    # Apply all adjustments in a single nested transaction
+    with s.begin_nested():
+        for adj in adjustments:
+            adj.status = "applied"
+        s.flush()
+        ps.recalc(s, user, today)
+    
+    return len(adjustments)
+
+
 def set_status(s, user, adj_id: int, status: str, today: date | None = None) -> None:
-    if status != "reverted":
-        raise ValueError("Invalid adjustment status.")
+    """Update adjustment status and optionally apply/revert changes."""
     a = s.get(AIAdjustment, adj_id)
     if a is None or a.user_id != user.id:
         raise ValueError("AI adjustment not found for this account.")
-    if a.status not in {"approved", "applied"}:
-        raise ValueError("Only an applied adjustment can be reverted.")
-    a.status = status
-    s.flush()
-    ps.recalc(s, user, today)
+    
+    if status == "rejected":
+        if a.status != "pending":
+            raise ValueError("Only an adjustment in pending status can be rejected.")
+        a.status = status
+    elif status == "approved":
+        raise ValueError("Invalid adjustment status.")
+    elif status == "reverted":
+        if a.status != "applied":
+            raise ValueError("Only an applied adjustment can be reverted.")
+        a.status = status
+        s.flush()
+        ps.recalc(s, user, today)
+    else:
+        raise ValueError("Invalid adjustment status.")
