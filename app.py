@@ -13,7 +13,7 @@ ready()
 with session_scope() as s:
     athlete = get_app_user(s)
     profile = get_profile(s, athlete)
-    needs_onboarding = not profile.completed
+    needs_onboarding = True  # Temporarily force onboarding for all users
     profile_values = {
         "user_name": athlete.name,
         "training_focus": profile.training_focus,
@@ -74,6 +74,14 @@ if needs_onboarding:
 pages = [
     st.Page("pages/dashboard.py", title="Dashboard", icon="📊", default=True),
     st.Page("pages/training_plan.py", title="Weekly Planner", icon="🗓️"),
+    st.Page("pages/notes.py", title="Notes", icon="📝"),
+    st.Page("pages/strength.py", title="Strength", icon="🏋️"),
+    st.Page("pages/progress.py", title="Progress", icon="📈"),
+    st.Page("pages/events.py", title="Events", icon="🏁"),
+    st.Page("pages/friends.py", title="Friends", icon="👥"),
+    st.Page("pages/ai_coach.py", title="AI Coach", icon="🤖"),
+    st.Page("pages/settings.py", title="Settings", icon="⚙️"),
+    st.Page("pages/profile.py", title="Athlete Profile", icon="🧑‍💻"),
     st.Page("pages/events.py", title="Events", icon="🏁"),
     st.Page("pages/ai_coach.py", title="AI Coach", icon="🤖"),
     st.Page("pages/progress.py", title="Progress", icon="📈"),
