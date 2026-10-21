@@ -92,6 +92,8 @@ def test_accepted_friends_can_edit_future_runs_only(db):
         incoming, _ = ps.friend_requests(s, friend)
         assert len(incoming) == 1
         ps.respond_friend_request(s, friend, incoming[0].id, True)
+        # Ensure permissions are set for the test
+        ps.update_permissions(s, owner.id, friend.id, viewer=True, editor=True)
         assert [account.id for account in ps.accepted_friends(s, owner)] == [friend.id]
 
         run = next(item for item in ps.all_runs(s, owner) if item.date >= date.today() and item.slot != "race")
