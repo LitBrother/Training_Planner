@@ -487,16 +487,20 @@ def update_permissions(s, user_id, friend_id, viewer, editor):
         s.flush()
 
 
-def assert_friend_access(s, actor, owner_id: int) -> None:
+def assert_friend_access(s, actor, owner_id: int, edit: bool = False) -> None:
     if actor.id == owner_id:
         return
     row = _friendship(s, actor.id, owner_id)
     if row is None or row.status != "accepted":
         raise ValueError("Only an accepted friend can view or edit this plan.")
+    if edit and not row.editor:
+        raise ValueError("Only a friend with editor permissions can edit this plan.")
+    if not row.viewer and not row.editor:
+        raise ValueError("Only a friend with viewer or editor permissions can view this plan.")
 
 
 def edit_shared_run(s, actor, owner, run_id: int, new_km: float, new_type: str) -> None:
-    assert_friend_access(s, actor, owner.id)
+    assert_friend_access(s, actor, owner.id, edit=True)
     run = s.get(RunningSession, run_id)
     if run is None or run.user_id != owner.id:
         raise ValueError("Running session not found for this plan.")
@@ -531,7 +535,7 @@ def edit_shared_run(s, actor, owner, run_id: int, new_km: float, new_type: str) 
 
 
 def update_shared_goal(s, actor, owner, race_date: date | None) -> None:
-    assert_friend_access(s, actor, owner.id)
+    assert_friend_access(s, actor, owner.id, edit=True)
     cfg = get_settings(s, owner)
     updated = PlanSettings.model_validate({**cfg.model_dump(), "race_date": race_date})
     save_settings(s, owner, updated)
