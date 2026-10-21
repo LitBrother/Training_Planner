@@ -478,8 +478,8 @@ def send_friend_request(s, user, email: str) -> None:
 def respond_friend_request(s, user, friendship_id: int, accept: bool) -> None:
     row = s.get(Friendship, friendship_id)
     if (row is None or user.id not in (row.user_id, row.friend_id) or row.requested_by == user.id
-            or row.status != "pending"):
-        raise ValueError("Incoming friend request not found.")
+            or row.status != "pending" or row.expires_at < datetime.now()):
+        raise ValueError("Incoming friend request not found or expired.")
     row.status = "accepted" if accept else "rejected"
     s.flush()
 

@@ -1,4 +1,5 @@
 import datetime as dt
+from datetime import timedelta
 from typing import Optional
 
 from sqlalchemy import (
@@ -45,6 +46,7 @@ class Friendship(Base):
     status: Mapped[str] = mapped_column(String(20), default="pending")
     viewer: Mapped[bool] = mapped_column(Boolean, default=False)
     editor: Mapped[bool] = mapped_column(Boolean, default=False)
+    expires_at: Mapped[dt.datetime] = mapped_column(DateTime, default=lambda: dt.datetime.now() + timedelta(days=7))
     created_at: Mapped[dt.datetime] = mapped_column(DateTime, default=dt.datetime.now)
 
 
