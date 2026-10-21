@@ -8,7 +8,7 @@ import pandas as pd
 
 from database.session import session_scope
 from models.orm import RunningSession
-from services import plan_service as ps
+from services import garmin_accounts, plan_service as ps
 from services.auth import runtime_config
 from services.garmin_link import auto_link, link
 from services.garmin_sync import fetch_runs_cached
@@ -17,16 +17,29 @@ from utils.bootstrap import get_app_user, ready
 ready()
 st.title("⌚ Garmin")
 
-if runtime_config()[0] is not None:
-    st.info("Garmin connections are not yet isolated per account. Per-user Garmin linking will be added separately.")
-    st.stop()
+is_hosted = runtime_config()[0] is not None
 
-if st.button("Sync and auto-match"):
-    with st.spinner("Contacting Garmin..."):
-        st.session_state["garmin_runs"] = fetch_runs_cached(st.secrets["GARMIN_EMAIL"], st.secrets["GARMIN_PASSWORD"])
+if is_hosted:
     with session_scope() as s:
-        n = auto_link(s, get_app_user(s), st.session_state["garmin_runs"])
-    st.success(f"Matched {n} runs to sessions.")
+        user = get_app_user(s)
+        creds = garmin_accounts.credentials(s, user)
+        if creds is None:
+            st.info("Connect your Garmin account in **Settings → Garmin** to sync your runs.")
+            st.stop()
+    if st.button("Sync my Garmin runs"):
+        with st.spinner("Contacting Garmin..."):
+            with session_scope() as s:
+                user = get_app_user(s)
+                st.session_state["garmin_runs"] = garmin_accounts.fetch_account_runs(s, user)
+                n = auto_link(s, user, st.session_state["garmin_runs"])
+        st.success(f"Matched {n} runs to sessions.")
+else:
+    if st.button("Sync and auto-match"):
+        with st.spinner("Contacting Garmin..."):
+            st.session_state["garmin_runs"] = fetch_runs_cached(st.secrets["GARMIN_EMAIL"], st.secrets["GARMIN_PASSWORD"])
+        with session_scope() as s:
+            n = auto_link(s, get_app_user(s), st.session_state["garmin_runs"])
+        st.success(f"Matched {n} runs to sessions.")
 
 runs = st.session_state.get("garmin_runs", [])
 with session_scope() as s:
