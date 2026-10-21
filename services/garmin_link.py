@@ -17,6 +17,23 @@ def link(s, user, session_id: int, run: dict) -> None:
     sess.source = "garmin"
 
 
+def unlink(s, user, session_id: int) -> None:
+    """Remove a Garmin match from a session. Raises ValueError if the session
+    is not found, doesn't belong to this user, has no Garmin link, or is
+    manually locked."""
+    sess = s.get(RunningSession, session_id)
+    if sess is None or sess.user_id != user.id:
+        raise ValueError("Running session not found for this account.")
+    if sess.manual_lock:
+        raise ValueError("That session was set manually. Unlock it first.")
+    if not sess.garmin_id:
+        raise ValueError("That session has no Garmin match to remove.")
+    sess.garmin_id = None
+    sess.actual_km = None
+    sess.status = "planned"
+    sess.source = None
+
+
 def auto_link(s, user, runs: list[dict]) -> int:
     sessions = list(s.scalars(select(RunningSession).where(RunningSession.user_id == user.id)))
     by_id = {r["id"]: r for r in runs}

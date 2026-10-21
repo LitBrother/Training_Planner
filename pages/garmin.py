@@ -10,7 +10,7 @@ from database.session import session_scope
 from models.orm import RunningSession
 from services import garmin_accounts, plan_service as ps
 from services.auth import runtime_config
-from services.garmin_link import auto_link, link
+from services.garmin_link import auto_link, link, unlink
 from services.garmin_sync import fetch_runs_cached
 from utils.bootstrap import get_app_user, ready
 from garminconnect import (
@@ -103,6 +103,21 @@ with session_scope() as s:
             link(s, user, pick.id, r)
             ps.recalc(s, user)
             st.rerun()
+
+    matched = [x for x in all_s if x.garmin_id]
+    if matched:
+        st.subheader("Matched sessions")
+        for sess in matched:
+            c2 = st.columns([5, 1])
+            c2[0].write(f"{sess.date:%a %d %b} — {sess.name or sess.slot}, {sess.actual_km} km (Garmin ID: {sess.garmin_id})")
+            if c2[1].button("Unlink", key=f"unlink_{sess.id}"):
+                try:
+                    unlink(s, user, sess.id)
+                    ps.recalc(s, user)
+                except ValueError as e:
+                    st.error(str(e))
+                else:
+                    st.rerun()
 
 if runs:
     df = pd.DataFrame(runs)

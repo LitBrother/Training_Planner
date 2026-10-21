@@ -1,11 +1,14 @@
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, date
 
 from pathlib import Path
 
 import pytest
 from streamlit.testing.v1 import AppTest
 
-from services import auth, garmin_accounts, garmin_link
+from database.session import session_scope
+from models.orm import RunningSession, TrainingWeek
+from services import auth, garmin_accounts, garmin_link, plan_service as ps
+from services.garmin_link import unlink
 from utils import bootstrap
 
 GARMIN_PAGE = Path(__file__).resolve().parent.parent / "pages" / "garmin.py"
@@ -121,3 +124,59 @@ def test_failed_sync_no_success_state(db, monkeypatch):
     assert len(app.error) == 1
     assert "Sync failed" in app.error[0].value
     assert "garmin_sync_last_success" not in app.session_state
+
+
+def test_unlink_clears_garmin_fields(db):
+    """Unlinking a matched session clears garmin_id, actual_km, source, and resets status to planned."""
+    with session_scope() as s:
+        user = ps.ensure_user(s)
+        # Grab the first planned session created by the db fixture's sync_plan
+        session = ps.all_runs(s, user)[0]
+        session_id = session.id
+
+        # Manually set Garmin-linked state
+        session.garmin_id = "g1"
+        session.actual_km = 10.0
+        session.status = "completed"
+        session.source = "garmin"
+        s.flush()
+
+        unlink(s, user, session_id)
+        ps.recalc(s, user)
+
+        assert session.garmin_id is None
+        assert session.actual_km is None
+        assert session.status == "planned"
+        assert session.source is None
+
+
+def test_unlink_recalculates_week_totals(db):
+    """After unlinking, the owning week's actual_km drops to exclude the removed run."""
+    with session_scope() as s:
+        user = ps.ensure_user(s)
+        # Use the first run in week 1
+        week = ps.list_weeks(s, user)[0]
+        session = ps.week_runs(s, week.id)[0]
+        session_id = session.id
+
+        # Link it to a Garmin activity
+        session.garmin_id = "g2"
+        session.actual_km = 12.0
+        session.status = "completed"
+        session.source = "garmin"
+        s.flush()
+
+        ps.recalc(s, user)
+        # Reload week to capture current actual_km
+        s.refresh(week)
+        actual_before = week.actual_km
+        assert actual_before >= 12.0, "Week actual_km should include the linked run"
+
+        unlink(s, user, session_id)
+        ps.recalc(s, user)
+
+        s.refresh(week)
+        assert week.actual_km < actual_before, (
+            f"Expected week.actual_km to decrease after unlink; "
+            f"before={actual_before}, after={week.actual_km}"
+        )
