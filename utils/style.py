@@ -3,6 +3,7 @@ import streamlit as st
 CSS = """
 <style>
 .block-container { padding-top: 2rem; max-width: 1200px; }
+@media (max-width: 768px) { .block-container { max-width: 95%; } }
 h1 { font-weight: 800; letter-spacing: -0.5px;
      background: linear-gradient(90deg, #00D4AA, #4F8CFF);
      -webkit-background-clip: text; -webkit-text-fill-color: transparent; }
@@ -18,6 +19,11 @@ h1 { font-weight: 800; letter-spacing: -0.5px;
 [data-testid="stSidebar"] { background: #121722; border-right: 1px solid #2A3142; }
 [data-testid="stDataFrame"] { border-radius: 12px; overflow: hidden; }
 #MainMenu, footer { visibility: hidden; }
+/* TP-42: Responsive viewport */
+@media (max-width: 768px) {
+    .block-container { max-width: 95%; }
+    .stPlotlyChart { overflow-x: auto; }
+}
 </style>
 """
 

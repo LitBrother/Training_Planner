@@ -5,7 +5,7 @@ from datetime import date
 
 from database.session import session_scope
 from models.schemas import PlanSettings
-from services import export_service as ex
+from services import export_service as ex, reliability
 from services import plan_service as ps
 from services.athlete_profile import get_profile
 from services.garmin_sync import fetch_runs, garmin_credentials
@@ -73,6 +73,38 @@ with session_scope() as s:
     st.text_input("Gemini API key (kept in this browser session only)", type="password", key="openai_key")
 
     st.subheader("Data")
+# TP-46: Restore preview before replacing account data
+backup_file = st.file_uploader("JSON restore", type="json")
+if backup_file:
+    try:
+        preview = restore_preview.preview_restore(s, user, backup_file.getvalue().decode("utf-8"))
+        st.subheader("Restore Preview")
+        st.markdown(f"""This backup contains:
+
+- {preview['users']} user record (you)
+- {preview['athlete_profile']} profile entry
+- {preview['training_weeks']} training weeks
+- {preview['running_sessions']} running sessions
+- {preview['strength_sessions']} strength sessions
+- {preview['strength_logs']} strength logs
+- {preview['strength_set_details']} per-set details
+- {preview['notes']} notes
+- {preview['events']} events
+- {preview['ai_adjustments']} AI adjustments
+- {preview['settings']} settings
+- {preview['run_correction_history']} run corrections
+
+The restore will replace only your current account's data. Garmin credentials and other accounts' data remain untouched.
+
+Click below to confirm and restore."""")
+        if st.button("Confirm Restore"):
+            try:
+                counts = restore_preview.restore_with_preview(s, user, backup_file.getvalue().decode("utf-8"))
+                st.success(f"Restored {counts}")
+            except Exception as exc:
+                st.error(f"Restore failed: {exc}")
+    except Exception as exc:
+        st.error(f"Invalid backup file: {exc}")
     table = st.selectbox("CSV table", list(ex.TABLES))
     st.markdown(ex.manifest_text("csv", user, table))
     st.markdown(ex.manifest_text("excel", user))
@@ -96,6 +128,24 @@ with session_scope() as s:
         except Exception as exc:
             st.error(f"Restore failed: {exc}")
 st.caption("Your hosted database persists across app restarts. Keep a JSON backup as an extra safeguard.")
+# TP-47: Operational logging without exposing sensitive info
+st.subheader("Operational logs")
+if st.button("View recent logs"):
+    try:
+        with session_scope() as s:
+            user = get_app_user(s)
+            events = reliability.recent_operational_events(s, user)
+            st.markdown("Recent operational events (last 7 days):")
+            for e in events:
+                details = reliability.redact_sensitive_details(e.details)
+                st.markdown(f"- {e.event_type}: {details or 'No details'} ({e.timestamp:%Y-%m-%d %H:%M})" if details else f"- {e.event_type} ({e.timestamp:%Y-%m-%d %H:%M})")
+    except Exception as exc:
+        st.error(f"Could not load logs: {exc}")
+# TP-48: Weekly reflection optional
+st.subheader("Weekly reflection")
+reflect = st.checkbox("Show weekly reflection prompt", value=False)
+if reflect:
+    st.markdown("Optional: Reflect on your week. This does not affect your plan or show streaks.")
 
 st.subheader("Garmin")
 hosted = runtime_config()[0] is not None
