@@ -180,9 +180,25 @@ def strength_history(s, user, today: date) -> list[dict]:
     ]
 
 
+def verify_ai_wellness_consent(s, user, include_garmin_recovery: bool) -> tuple[bool, str]:
+    """Verify account-wide wellness transmission consent."""
+    profile = get_profile(s, user)
+    if include_garmin_recovery and not profile.share_garmin_recovery_with_ai:
+        return False, (
+            "AI transmission of wellness data blocked: account-wide consent is revoked. "
+            "To re-enable, update your settings. Note: previously transmitted data may be "
+            "retained under provider terms."
+        )
+    return True, ""
+
+
 def request_proposals(context: dict, api_key: str, model: str,
                       include_notes: bool = False,
                       include_garmin_recovery: bool = False) -> tuple[str, list[dict], list[dict]]:
+    # ...existing implementation...
+    # (Gate check goes here, but we need session 's' and 'user' which aren't passed)
+    # Actually, I should probably pass s and user or check consent elsewhere.
+    # Let's check consent right before calling this function in pages/ai_coach.py
     if not model.startswith("gemini"):
         model = "gemini-3.5-flash-lite"
     # Treat the affirmative as request-scoped: callers cannot accidentally forward notes

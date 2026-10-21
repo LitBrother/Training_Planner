@@ -28,7 +28,15 @@ with session_scope() as s:
         name = st.text_input("Name", cfg.user_name)
         focus = st.selectbox("Training focus", ["Running", "Strength", "Both"],
                              index=["Running", "Strength", "Both"].index(cfg.training_focus))
+        # ... inside the settings form ...
         goal = st.text_input("Training goal", cfg.goal)
+        
+        # TP-32: Wellness data sharing consent
+        profile = get_profile(s, user)
+        share_wellness = st.checkbox("Share Garmin recovery data with AI", value=profile.share_garmin_recovery_with_ai)
+        if not share_wellness and profile.share_garmin_recovery_with_ai:
+            st.warning("Wellness sharing revoked. Existing Garmin wellness caches will be cleared.")
+        
         has_goal = st.checkbox("I have a goal event", value=cfg.race_date is not None)
         race = st.date_input("Goal event date", cfg.race_date or date.today()) if has_goal else None
         race_distance = st.number_input("Goal event distance (km)", 1.0, 100.0, cfg.race_distance_km, 0.1,
@@ -54,6 +62,9 @@ with session_scope() as s:
                 ps.sync_plan(s, user, new)
                 profile = get_profile(s, user)
                 profile.training_focus, profile.goal = focus, goal.strip()
+                profile.share_garmin_recovery_with_ai = share_wellness
+                if not share_wellness:
+                    st.session_state.pop("garmin_wellness", None)
                 st.success("Saved. Logged sessions were preserved.")
                 st.session_state.pop("_synced", None)
             except (ValidationError, ValueError) as exc:

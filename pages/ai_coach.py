@@ -150,6 +150,11 @@ with session_scope() as s:
             st.session_state.pop(result_key, None)
         try:
             with st.spinner("Reviewing..."):
+                # Gate check for TP-32
+                consent_ok, consent_msg = ai.verify_ai_wellness_consent(s, user, include_garmin_recovery)
+                if not consent_ok:
+                    raise ValueError(consent_msg)
+
                 ctx = ai.build_context(
                     s, user, today, runs, wellness, include_notes=include_notes,
                     include_garmin_recovery=include_garmin_recovery,
