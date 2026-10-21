@@ -43,6 +43,8 @@ class Friendship(Base):
     friend_id: Mapped[int] = mapped_column(ForeignKey("users.id"))
     requested_by: Mapped[int] = mapped_column(ForeignKey("users.id"))
     status: Mapped[str] = mapped_column(String(20), default="pending")
+    viewer: Mapped[bool] = mapped_column(Boolean, default=False)
+    editor: Mapped[bool] = mapped_column(Boolean, default=False)
     created_at: Mapped[dt.datetime] = mapped_column(DateTime, default=dt.datetime.now)
 
 

@@ -425,6 +425,10 @@ def _friendship(s, user_id: int, friend_id: int):
     )).first()
 
 
+def get_friendship(s, user_id, friend_id):
+    return _friendship(s, user_id, friend_id)
+
+
 def accepted_friends(s, user):
     rows = s.scalars(select(Friendship).where(
         Friendship.status == "accepted",
@@ -475,12 +479,12 @@ def respond_friend_request(s, user, friendship_id: int, accept: bool) -> None:
     s.flush()
 
 
-def remove_friend(s, user, friend_id: int) -> None:
-    row = _friendship(s, user.id, friend_id)
-    if row is None or row.status != "accepted":
-        raise ValueError("Accepted friend connection not found.")
-    s.delete(row)
-    s.flush()
+def update_permissions(s, user_id, friend_id, viewer, editor):
+    row = _friendship(s, user_id, friend_id)
+    if row:
+        row.viewer = viewer
+        row.editor = editor
+        s.flush()
 
 
 def assert_friend_access(s, actor, owner_id: int) -> None:

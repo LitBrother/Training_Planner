@@ -54,58 +54,72 @@ with session_scope() as s:
         st.info("Once you and a friend accept the connection, their plan will appear here.")
     else:
         friend = st.selectbox("Shared plan", friends, format_func=lambda item: f"{item.name} ({item.email})")
-        ps.assert_friend_access(s, user, friend.id)
-        cfg = ps.get_settings(s, friend)
-        st.subheader(f"{friend.name}'s training goal")
-        with st.form(f"goal{friend.id}"):
-            has_race = st.checkbox("Goal race is set", value=cfg.race_date is not None)
-            race_date = st.date_input("Goal race date", value=cfg.race_date or date.today()) if has_race else None
-            save_goal = st.form_submit_button("Update goal")
-        if save_goal:
-            try:
-                ps.update_shared_goal(s, user, friend, race_date)
-                st.success("Goal and training plan updated.")
-                rerun = True
-            except ValueError as exc:
-                st.error(f"Could not update goal: {exc}")
+        friendship = ps.get_friendship(s, user.id, friend.id)
+        
+        # New UI logic
+        if not (friendship.viewer or friendship.editor):
+            st.info("You need to grant access permissions to see/edit their plan.")
+            with st.form("permissions"):
+                viewer = st.checkbox("Viewer (can see dates/types/distance)")
+                editor = st.checkbox("Editor (can change dates/types/distance)")
+                confirm = st.form_submit_button("Confirm permissions")
+                if confirm:
+                     ps.update_permissions(s, user.id, friend.id, viewer, editor)
+                     st.success("Permissions updated.")
+                     rerun = True
+        else:
+            ps.assert_friend_access(s, user, friend.id)
+            cfg = ps.get_settings(s, friend)
+            st.subheader(f"{friend.name}'s training goal")
+            with st.form(f"goal{friend.id}"):
+                has_race = st.checkbox("Goal race is set", value=cfg.race_date is not None)
+                race_date = st.date_input("Goal race date", value=cfg.race_date or date.today()) if has_race else None
+                save_goal = st.form_submit_button("Update goal")
+            if save_goal:
+                try:
+                    ps.update_shared_goal(s, user, friend, race_date)
+                    st.success("Goal and training plan updated.")
+                    rerun = True
+                except ValueError as exc:
+                    st.error(f"Could not update goal: {exc}")
 
-        weeks = ps.list_weeks(s, friend)
-        if weeks:
-            selected = st.selectbox(
-                "Training week", weeks, index=ps.current_week_index(weeks, date.today()),
-                format_func=lambda week: f"Week {week.week_no} | {week.week_start:%d %b %Y} | {week.phase}",
-                key=f"week{friend.id}",
-            )
-            runs = list(s.scalars(select(RunningSession).where(
-                RunningSession.user_id == friend.id, RunningSession.week_id == selected.id
-            ).order_by(RunningSession.date)))
-            st.write(f"**{selected.adjusted_km:g} adjusted km** of {selected.planned_km:g} planned km")
-            for run in runs:
-                run_type = run.adjusted_type or run.run_type
-                st.markdown(f"**{run.date:%a %d %b} — {run.name}** · {run_type} · "
-                            f"{run.adjusted_km:g} km (planned {run.planned_km:g} km)")
-                if run.status != "planned" or run.date < date.today() or run.slot == "race":
-                    st.caption("This session is not editable.")
-                    continue
-                options = [name for name, intensity in INTENSITY.items() if intensity <= rank(run_type)]
-                with st.form(f"edit{friend.id}_{run.id}"):
-                    c1, c2 = st.columns(2)
-                    distance = c1.number_input(
-                        "Distance (km)", min_value=0.0, max_value=max(run.planned_km * 1.1, 0.1),
-                        value=float(run.adjusted_km), step=0.5, key=f"km{friend.id}_{run.id}",
-                    )
-                    kind = c2.selectbox(
-                        "Workout type", options, index=options.index(run_type),
-                        key=f"type{friend.id}_{run.id}",
-                    )
-                    save = st.form_submit_button("Save edit")
-                if save:
-                    try:
-                        ps.edit_shared_run(s, user, friend, run.id, distance, kind)
-                        st.success("Shared plan updated.")
-                        rerun = True
-                    except ValueError as exc:
-                        st.error(str(exc))
+            weeks = ps.list_weeks(s, friend)
+            if weeks:
+                selected = st.selectbox(
+                    "Training week", weeks, index=ps.current_week_index(weeks, date.today()),
+                    format_func=lambda week: f"Week {week.week_no} | {week.week_start:%d %b %Y} | {week.phase}",
+                    key=f"week{friend.id}",
+                )
+                runs = list(s.scalars(select(RunningSession).where(
+                    RunningSession.user_id == friend.id, RunningSession.week_id == selected.id
+                ).order_by(RunningSession.date)))
+                st.write(f"**{selected.adjusted_km:g} adjusted km** of {selected.planned_km:g} planned km")
+                for run in runs:
+                    run_type = run.adjusted_type or run.run_type
+                    st.markdown(f"**{run.date:%a %d %b} — {run.name}** · {run_type} · "
+                                f"{run.adjusted_km:g} km (planned {run.planned_km:g} km)")
+                    if run.status != "planned" or run.date < date.today() or run.slot == "race" or not friendship.editor:
+                        st.caption("This session is not editable.")
+                        continue
+                    options = [name for name, intensity in INTENSITY.items() if intensity <= rank(run_type)]
+                    with st.form(f"edit{friend.id}_{run.id}"):
+                        c1, c2 = st.columns(2)
+                        distance = c1.number_input(
+                            "Distance (km)", min_value=0.0, max_value=max(run.planned_km * 1.1, 0.1),
+                            value=float(run.adjusted_km), step=0.5, key=f"km{friend.id}_{run.id}",
+                        )
+                        kind = c2.selectbox(
+                            "Workout type", options, index=options.index(run_type),
+                            key=f"type{friend.id}_{run.id}",
+                        )
+                        save = st.form_submit_button("Save edit")
+                    if save:
+                        try:
+                            ps.edit_shared_run(s, user, friend, run.id, distance, kind)
+                            st.success("Shared plan updated.")
+                            rerun = True
+                        except ValueError as exc:
+                            st.error(str(exc))
 
         if st.button(f"Disconnect from {friend.name}", type="secondary"):
             ps.remove_friend(s, user, friend.id)
