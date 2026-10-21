@@ -256,8 +256,11 @@ with session_scope() as s:
             st.write(item["reason"])
             st.caption("Only increase if you completed the target reps with good form and no pain.")
             for source_id in item["evidence_ids"]:
-                source = sources[source_id]
-                st.markdown(f"[{source_id}]({source['url']})")
+                source = sources.get(source_id)
+                if source:
+                    st.markdown(f"- **{source['principle']}**: [{source['citation']}]({source['url']})")
+                else:
+                    st.caption(f"Source {source_id} not found.")
 
     st.subheader("AI change history")
     if st.button("Clear filters", key="ai_history_clear_filters"):
