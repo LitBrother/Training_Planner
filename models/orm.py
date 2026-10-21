@@ -48,6 +48,15 @@ class Friendship(Base):
     created_at: Mapped[dt.datetime] = mapped_column(DateTime, default=dt.datetime.now)
 
 
+class PlanChangeHistory(Base):
+    __tablename__ = "plan_change_history"
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    owner_id: Mapped[int] = mapped_column(ForeignKey("users.id"))
+    actor_id: Mapped[int] = mapped_column(ForeignKey("users.id"))
+    field_changed: Mapped[str] = mapped_column(String(50))
+    timestamp: Mapped[dt.datetime] = mapped_column(DateTime, default=dt.datetime.now)
+
+
 class Setting(Base):
     __tablename__ = "settings"
     id: Mapped[int] = mapped_column(Integer, primary_key=True)

@@ -6,7 +6,7 @@ import pandas as pd
 from sqlalchemy import func, select
 
 from models.orm import (
-    AIAdjustment, Event, Friendship, Note, RunCorrectionHistory, RunningSession, Setting,
+    AIAdjustment, Event, Friendship, Note, PlanChangeHistory, RunCorrectionHistory, RunningSession, Setting,
     StrengthLog, StrengthSession, TrainingWeek, User,
 )
 from models.schemas import PlanSettings
@@ -425,8 +425,13 @@ def _friendship(s, user_id: int, friend_id: int):
     )).first()
 
 
-def get_friendship(s, user_id, friend_id):
-    return _friendship(s, user_id, friend_id)
+def get_plan_change_history(s, actor, owner_id):
+    assert_friend_access(s, actor, owner_id)
+    cutoff = datetime.now() - timedelta(days=90)
+    return list(s.scalars(select(PlanChangeHistory).where(
+        PlanChangeHistory.owner_id == owner_id,
+        PlanChangeHistory.timestamp >= cutoff
+    ).order_by(PlanChangeHistory.timestamp.desc())))
 
 
 def accepted_friends(s, user):
@@ -487,6 +492,18 @@ def update_permissions(s, user_id, friend_id, viewer, editor):
         s.flush()
 
 
+def record_plan_change(s, owner_id, actor_id, field):
+    s.add(PlanChangeHistory(owner_id=owner_id, actor_id=actor_id, field_changed=field))
+    s.flush()
+
+
+def get_plan_change_history(s, owner_id, actor_id):
+    return list(s.scalars(select(PlanChangeHistory).where(
+        PlanChangeHistory.owner_id == owner_id,
+        PlanChangeHistory.timestamp >= datetime.now() - timedelta(days=90)
+    ).order_by(PlanChangeHistory.timestamp.desc())))
+
+
 def assert_friend_access(s, actor, owner_id: int, edit: bool = False) -> None:
     if actor.id == owner_id:
         return
@@ -530,6 +547,7 @@ def edit_shared_run(s, actor, owner, run_id: int, new_km: float, new_type: str) 
         old_km=run.adjusted_km, new_km=new_km, old_type=current_type, new_type=new_type,
         reason=f"Edited by accepted friend {actor.name}", status="applied",
     ))
+    record_plan_change(s, owner.id, actor.id, "run_distance_or_type")
     s.flush()
     recalc(s, owner)
 
@@ -539,6 +557,7 @@ def update_shared_goal(s, actor, owner, race_date: date | None) -> None:
     cfg = get_settings(s, owner)
     updated = PlanSettings.model_validate({**cfg.model_dump(), "race_date": race_date})
     save_settings(s, owner, updated)
+    record_plan_change(s, owner.id, actor.id, "race_date")
     sync_plan(s, owner, updated)
 
 

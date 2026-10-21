@@ -69,6 +69,14 @@ with session_scope() as s:
                      rerun = True
         else:
             ps.assert_friend_access(s, user, friend.id)
+            # Show history
+            history = ps.get_plan_change_history(s, friend.id, user.id)
+            if history:
+                with st.expander("Recent changes"):
+                    for h in history:
+                        actor = s.get(User, h.actor_id)
+                        st.write(f"{h.timestamp.strftime('%d %b %H:%M')}: {actor.name if actor else 'Unknown'} changed {h.field_changed}")
+            
             cfg = ps.get_settings(s, friend)
             st.subheader(f"{friend.name}'s training goal")
             with st.form(f"goal{friend.id}"):
